@@ -12,6 +12,8 @@ Master Merged Script V4 is a collection of some of the best scripts in AI Dungeo
 
 MMS Version 5 is a current work in progress. V5 aims to merge all current scripts into 1 seamless script providing all functions without the conflicts.
 
+FULL DISCLAIMER: Enabling all scripts, at the same time, CAN and/or WILL cause unintended outputs or errors. For Now... 
+
 ---
 
 ## Original Creators
@@ -117,7 +119,7 @@ modifier(text)
 
 ### *That's it*
 
-All adventures played from your scenario will now include Master Merged Script.
+All adventures played from your scenario will now include Master Merged Script Version 4.
 
 
 ## Useful Links
