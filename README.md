@@ -152,9 +152,4 @@ All adventures played from your scenario will now include Master Merged Script.
 
 </details>
 
-- v1.0.1 → v1.0.2 by [dirtymined13](https://github.com/dirtymined13)
-- v1.0.0 → v1.0.1 by [-Vinny-](https://play.aidungeon.com/profile/-Vinny-)
-
-</details>
-
 <p align="center"><i>Please show the original creators much love and appreciation</i> </p>
