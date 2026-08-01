@@ -10,7 +10,7 @@
 
 Master Merged Script V4 is a collection of some of the best scripts in AI Dungeon to grace us with awesome capabilities and game changing mechanics. MMSv4 serves as a 'Glass Case Museum' by gathering them all and presenting them, to YOU, for easy use.
 
-MMS Version 5 is a current work in progress. V5 aims to merge all current scripts into 1 seamless script providing all functions without the conflictions.
+MMS Version 5 is a current work in progress. V5 aims to merge all current scripts into 1 seamless script providing all functions without the conflicts.
 
 ---
 
@@ -21,7 +21,7 @@ MMS Version 5 is a current work in progress. V5 aims to merge all current script
 | **Inner Self (IS+AC)** | @LewdLeah |
 | **Living Characters** | @nerdgirl450 |
 | **Anti Omniscience (Information Firewall)** | @nerdgirl450 |
-| **rue Auto Stats (TAS)** | @Yi1i1i |
+| **True Auto Stats (TAS)** | @Yi1i1i |
 | **Story Arc Engine (SAE)** | @Yi1i1i |
 | **Slow Burn (SB)** | @R3QUI3M |
 | **Stackable Inventory System** | @bottledfox |
