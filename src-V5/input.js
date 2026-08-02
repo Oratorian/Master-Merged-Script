@@ -1,4 +1,4 @@
-// MASTER SCRIPT V5.3.0 — Input
+// MASTER SCRIPT V5.3.1 — Input
 const modifier = (text) => {
   const original = (
     typeof text === "string" && text.length
@@ -18,7 +18,7 @@ const modifier = (text) => {
     }
     return { text: original };
   } catch (error) {
-    log("MCP V5.3.0 input error:", error);
+    log("MCP V5.3.1 input error:", error);
     return { text: original };
   }
 }
