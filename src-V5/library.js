@@ -1,12 +1,12 @@
 /* ============================================================
-   MASTER SCRIPT V5.3.0 — COMPACT EDITION (EXP.)
+   MASTER SCRIPT V5.3.1 — COMPACT EDITION (EXP.)
    Note to self: Get some sleep.
    ============================================================ */
 
 const MCPV5_VERSION = 5;
 const MCPV5_SCHEMA_VERSION = 3;
-const MCPV5_BUILD_VERSION = "5.3.0";
-const MCPV5_PATCH = "5.3.0-full-boundary-arbitration";
+const MCPV5_BUILD_VERSION = "5.3.1";
+const MCPV5_PATCH = "5.3.1-updated-cc-lc";
 const MCPV5_CARD_KEYS = "__MCP_EXACT_SCRIPT_COLLECTION__";
 const MCPV5_CARD_TITLE = "_MASTER CONTROL PANEL V5_";
 const MCPV5_CARD_TYPE = "_MCP_V5_";
@@ -88,6 +88,7 @@ const MCPV5_MODULE_STATE_KEYS = {
   realmheart: ["ubis"],
   information_firewall: ["informationFirewall"],
   character_continuity: [
+    "characterContinuityStableV1",
     "feeling", "goal", "situation", "target", "tension", "thought", "triggers"
   ]
 };
@@ -1007,7 +1008,7 @@ function MCPV5ConflictStatus(plan) {
 }
 function MCPV5CanonicalEntry(enabled, settings, plan, status) {
   const lines = [
-    "# MASTER SCRIPT V5.3.0 — FULL COMPATIBILITY HOST #",
+    "# MASTER SCRIPT V5.3.1 — FULL COMPATIBILITY HOST #",
     "",
     "Select any combination of scripts.",
     "Legacy Exact minimizes arbitration for standalone-like behavior.",
@@ -2197,7 +2198,7 @@ function MCPV5RecordDiagnostic(kind, data) {
   root.diagnostics.push(row);
   root.diagnostics = root.diagnostics.slice(-30);
   if (root.settings && root.settings.diagnostics) {
-    log("MCP V5.3.0", row.kind, row.data);
+    log("MCP V5.3.1", row.kind, row.data);
   }
 }
 function MCPV5InventoryAuditSnapshot(moduleId) {
@@ -10313,50 +10314,173 @@ function MCPV5Create_inner_package() {
   return { runInner, runAutoCards };
 }
 function MCPV5Create_living_characters() {
+  /*
+  LIVING CHARACTERS - AUTONOMOUS SOCIAL ENGINE
+  A LivingNarratives project. Everything in this file is part of Living Characters.
+
+  Docs, install, configuration, model tips, pressure presets, and troubleshooting:
+  https://github.com/LivingNarratives/LivingCharacters
+  (GitHub is the single source of truth -- always use it for the current version.)
+
+  This file contains TWO independent systems that belong to Living Characters:
+    1. Life Cards   - the autonomous NPC social-pressure engine (the bulk of this file).
+    2. Thought Cards- optional, player-facing thought journals ("Name - Thoughts"; a
+                      temporary 💭 marks the card that was just updated).
+                      Thought Cards are NOT brain cards and NOT memory: they never enter
+                      story context, are never read by the AI narrator, and never affect
+                      behavior, Life Card creation, targeting, pressure, momentum, or any
+                      story logic. The system only asks the model for a thought, captures
+                      it, and stores it for the player to read later. See the "THOUGHT
+                      CARD SYSTEM" module further down for full details.
+
+  Paste this whole block in: LIBRARY
+
+  CONTEXT TAB:
+  const modifier = (text) => {
+    text = LivingCharacters("context", text);
+    return { text };
+  };
+  modifier(text);
+
+  OUTPUT TAB:
+  const modifier = (text) => {
+    text = LivingCharacters("output", text);
+    return { text };
+  };
+  modifier(text);
+
+  INPUT TAB (optional):
+  const modifier = (text) => {
+    text = LivingCharacters("input", text);
+    return { text };
+  };
+  modifier(text);
+
+  (Existing adventures whose tabs still call ChaosGoblinV2(...) keep working via a
+   compatibility alias at the bottom of this file.)
+  */
+
   function LivingCharacters(hook, hookText) {
     "use strict";
+
     const CFG = {
-      VERSION: "2.59c-thought-name-then-natural-flow-2026-07-13",
+      VERSION: "2.63-thought-order-option-2026-07-13",
+
+      // All cast / protagonist / pressures / pacing come from the editable config
+      // Story Card below. No scenario-specific names live in engine logic.
       CONFIG_CARD_TITLE: "LIVING CHARACTERS CONFIG",
       CONFIG_CARD_KEY: "living-characters-config",
       CONFIG_CARD_TYPE: "Config",
+
+      // RELATIONSHIPS live on their OWN optional Story Card, kept separate from the
+      // engine-settings config card above (engine config vs. story relationship data).
+      // The key is non-matching so the card is NEVER injected into context; the card is
+      // found by key OR title, so a user only needs to match the TITLE. It is auto-created
+      // as a comments-only template (zero active rules = today's behavior) so users can
+      // discover and edit it. See parseRelationshipRules for the line format.
       REL_CARD_TITLE: "LIVING CHARACTERS RELATIONSHIPS",
       REL_CARD_KEY: "living-characters-relationships",
       REL_CARD_TYPE: "Relationships",
+      // Old config cards used this exact NOTES text (not a roster). Recognized so it
+      // is not mistaken for character names during the NOTES-roster migration.
       LEGACY_CONFIG_NOTES: "Living Characters setup. Edit cast, protagonist, pressures, and pacing here.",
+
+      // User-facing card naming is "Life". The key prefix VALUE ("chaos-v2:") is kept
+      // unchanged for save/card compatibility so existing Life cards (and legacy
+      // "Chaos - " cards) are still found by key and auto-migrated to Life titles.
       LIFE_CARD_TYPE: "Life",
       LIFE_CARD_TITLE_PREFIX: "Life - ",
       LIFE_CARD_KEY_PREFIX: "chaos-v2:",
+
+      // Seedling indicator shown while a Life card is unresolved; dropped on resolve.
       SEEDLING: "🌱",
       SEEDLING_IN_TITLE: true,
+
       DEBUG: false,
       DEBUG_CARD_TITLE: "Living Characters Debug",
       DEBUG_CARD_KEY: "lc-debug",
       DEBUG_CARD_TYPE: "Debug",
+
+      // Safe last-resort output. AI Dungeon reports "empty response" for an empty OR
+      // whitespace-only return; this zero-width space is non-empty and invisible to the
+      // player. Centralized here so every hook's final boundary uses the same fallback.
       EMPTY_OUTPUT_FALLBACK: "\u200B",
+
       AUTONOMY_ENABLED: true,
       AUTONOMY_MAX_PENDING_AGE: 1,
+
+      // Internal timing constants (NOT exposed on the public config card -- adjust here if
+      // needed). Dormancy cadence: threads age toward dormant on this turn interval.
       THREAD_REMINDER_EVERY: 7,   // slower aging so cards do not burn out too quickly
       THREAD_REMINDER_MAX: 3,
+      // Write-back checkpoint cadence: how often the LC_MEMORY write-back is offered.
+      // INDEPENDENT of dormancy -- it never ages cards or affects lifespan.
       CHECKPOINT_EVERY: 3,        // more frequent chances for Life Cards to develop
+
+      // Which active Life Cards are injected into context:
+      //   "strict" - only scene-relevant cards (an involved NPC is present)
+      //   "off"    - any active card (off-screen threads usable as world-state)
+      //   "hybrid" - scene-relevant first, then fill remaining slots off-screen
       SCENE_RELEVANCE_MODE: "off",
+
+      // HARD cap on simultaneously-open Life threads.
+      // Config can choose 1 or 2 active cards.
+      // When active slots are full, no new Life Card is rolled, seeded, replaced, or deleted.
+      // The system waits until an active card archives naturally.
       MAX_ACTIVE_LIFE_CARDS: 2,
       ACTIVE_LIFE_STATUSES: ["active", "simmering", "surfaced"],
+      // After this many dormancy-cadence appearances, an unresolved card goes dormant.
       THREAD_REMINDERS_BEFORE_DORMANT: 3,
+      // No Life Card may be created before this turn (1 = allow from the first turn).
       MIN_TURN_BEFORE_FIRST_SEED: 1,
+      // A card is flagged FRESH PRESSURE (urgent "reflect this now") for this many turns
+      // after it fires. 0 = only the turn it fires.
       FRESH_THREAD_WINDOW: 1,
+
+      // If the narrator shows a Life Card's actor but returns no <LC_MEMORY>, complete
+      // the card from the seed instead of leaving the placeholder forever.
       AUTO_COMPLETE_ONSCREEN_SEEDS: true,
+
+      // Whether a Life Card also triggers on its NPC target (not just its owner).
+      // The protagonist is never added as a trigger. Override in the config card.
       TRIGGER_ON_TARGET: true,
+
+      // Legacy/optional. Adds a shared trigger token to active cards + injects it into
+      // the block. Only helps systems that RE-SCAN the modified context for triggers;
+      // Hearthfire does not, so this is off by default now that the block carries the
+      // full card details directly. Leave false unless you know your front-end re-scans.
       FORCE_ACTIVE_CARD_TRIGGER: false,
       ACTIVE_SHARED_TRIGGER: "life-thread",
+
       MAX_CONTEXT_CARDS: 4,
       MAX_EVENT_LOG: 12,
+      // How many trailing context characters the scene detector scans (current scene).
       SCENE_SCAN_CHARS: 2000,
+      // In second-person stories the protagonist is "you" and the name rarely appears,
+      // but the protagonist is always present. When true (and a PROTAGONIST_NAME is set),
+      // the protagonist always counts as in-scene so protagonist-targeted threads are
+      // not disadvantaged. Set false for third-person stories that name the protagonist.
       PROTAGONIST_ALWAYS_PRESENT: true,
+
+      // How often NPC Life Cards TARGET the protagonist. This is a TARGET-side
+      // selection bias ONLY -- it does NOT let the protagonist OWN a Life Card and
+      // never has the narrator author the player's private thoughts/interiority.
+      //   "off"    - protagonist is excluded from target selection (pure NPC-to-NPC)
+      //   "normal" - default; protagonist can be targeted with no special weighting
+      //   "high"   - protagonist gets extra target weight (~3x an NPC); NPC-to-NPC still happens
+      //   "always" - new cards target the protagonist when legal; safe fallback otherwise
+      // If no PROTAGONIST_NAME is configured, every mode degrades safely to "normal".
       PROTAGONIST_INVOLVEMENT: "normal",
+
+      // ---- Thought Card system (SEPARATE from Life Cards) --------------------
+      // Player-facing thought journals. Thought Cards never enter context, are never
+      // read by the AI, and never affect Life Card logic. Own config card, own state.
       THOUGHT_CONFIG_CARD_TITLE: "THOUGHT CARDS CONFIG",
       THOUGHT_CONFIG_CARD_KEY: "living-thoughts-config",
       THOUGHT_CONFIG_CARD_TYPE: "Config",
+      // Title format is character-first for easy scanning. Base title: "Name - Thoughts".
+      // The 💭 is a TEMPORARY "recently updated" marker prepended to the title (see below),
+      // NOT a permanent part of it -- so the player can see which card just changed.
       THOUGHT_CARD_TITLE_SUFFIX: " - Thoughts",
       THOUGHT_MARKER: "💭",            // temporary "new thought / recently updated" title marker
       THOUGHT_MARKER_TURNS: 3,         // turns the 💭 marker stays before it clears
@@ -10365,30 +10489,87 @@ function MCPV5Create_living_characters() {
       THOUGHTS_ENABLED_DEFAULT: false,    // opt-in; off by default
       THOUGHT_INTERVAL_DEFAULT: 5,        // turns between thought attempts
       THOUGHT_CHANCE_DEFAULT: 50,         // % chance per eligible turn
+      // Thought Cards are NO LONGER limited to a fixed number of thoughts per character.
+      // Storage is bounded by CHARACTER COUNT across two fields of the Story Card:
+      //   - Entry holds the NEWEST thoughts up to ~THOUGHT_ENTRY_MAX_CHARS.
+      //   - Notes holds the OLDER overflow up to ~THOUGHT_NOTES_MAX_CHARS.
+      //   - Thoughts too old to fit in Notes are dropped (oldest-first). Numbers are
+      //     PERMANENT and never reused, so dropping old thoughts never renumbers the rest.
       MAX_THOUGHTS_DEFAULT: 10,           // legacy default kept for save/config compatibility; NOT a cap anymore
       THOUGHT_ENTRY_MAX_CHARS: 1700,      // newest thoughts live in the Story Card Entry up to ~this many chars
       THOUGHT_NOTES_MAX_CHARS: 1700,      // older overflow lives in the Story Card Notes up to ~this many chars
+      // Default is "scene": a character only gets a thought when they are actually in the
+      // current scene. No silent fallback to the roster (that is the opt-in "roster" mode).
       THOUGHT_SCENE_MODE_DEFAULT: "scene", // scene | recent | roster
+      // Display order of the numbered thoughts on a character's card. DISPLAY ONLY --
+      // storage stays oldest->newest so the overflow/trim logic is unaffected.
+      //   ascending  -> 1, 2, 3, 4  (oldest first; the original behavior)
+      //   descending -> 4, 3, 2, 1  (newest first)
+      THOUGHT_ORDER_DEFAULT: "ascending", // ascending | descending
       THOUGHT_SCENE_TIGHT_CHARS: 700,     // "scene" mode: how many trailing chars count as the CURRENT scene
+
+      // Fallback pressures, used ONLY if the config card lists none. Generic and
+      // scenario-agnostic; users override these in the config card's PRESSURES.
       DEFAULT_PRESSURES: [
         "attraction", "fondness", "friendship", "protectiveness",
         "curiosity", "envy", "jealousy", "rivalry",
         "betrayal", "resentment", "trust", "suspicion"
       ],
+
+      // LIFE_CARD_INTERVAL default: turns between Life Card generation ATTEMPTS.
+      // 0 = Off. Lower = more social activity, higher = less.
       DEFAULT_ACTIVITY_TURNS: 15,
+      // Legacy SOCIAL_ACTIVITY (deprecated) -> LIFE_CARD_INTERVAL. Auto-converted
+      // when an old config card has no LIFE_CARD_INTERVAL line.
       LEGACY_ACTIVITY_MAP: { off: 0, chaos: 5, busy: 10, balanced: 15, quiet: 20 },
+      // TARGET_COOLDOWN is counted in Life Cards (how many must occur before the same
+      // character can be selected again), not in turns.
       DEFAULT_TARGET_COOLDOWN: 3,
+
+      // Seed dedup TTL: a used owner|target|pressure signature blocks re-seeding for
+      // this many TURNS, then expires. Turn-based ON PURPOSE (not seed-count-based):
+      // with fixed RELATIONSHIPS pairs the blocked signature can be the ONLY possible
+      // seed, and a blocked seed never advances the seed count -- count-based aging
+      // would deadlock. Turns always advance.
       SEED_DEDUP_TTL_TURNS: 30,
+
+      // ---- World Event cards -------------------------------------------------
+      // A world event is a Life Card whose owner is the WORLD, not a person. It rides the
+      // SAME machinery as any other card -- slot cap, pacing, seeding, injection block,
+      // round-robin -- so it is not a second system. It is excluded from every CHARACTER
+      // path via kind === "event" (never an actor, never a target, never "in scene"), and
+      // because it takes a normal card slot, MAX_ACTIVE_CARDS alone decides whether it can
+      // coexist with a character card (set 1 to make the event the only card in play).
+      // The bucket key contains ":" -- cleanName can never produce that, so it can never
+      // collide with a real character's bucket, and the narrator can never address it.
+      EVENT_BUCKET_KEY: "event:world",
+      EVENT_OWNER_LABEL: "The World",
+      EVENT_CARD_TITLE: "Event - World",
+      EVENT_CARD_TYPE: "Event",
+      // Round-robin cycle:
+      //   relationship -> event -> random -> relationship -> random -> repeat
+      // Events take 1 seat in 5; relationship and random take 2 each. Re-tune the cadence
+      // anytime by editing this array. A seat that cannot produce is SKIPPED by the fallback
+      // loop in maybeCreateSeed, so an empty WORLD_EVENTS list simply degrades to the
+      // relationship/random seats and nothing stalls.
+      SEED_CYCLE: ["relationship", "event", "random", "relationship", "random"],
+
       STATUS_VALUES: ["active", "simmering", "surfaced", "dormant", "resolved"]
     };
+
     function getGlobalText(fallback) {
       if (typeof hookText === "string") return hookText;
       if (typeof globalThis.text === "string") return globalThis.text;
       return fallback || "";
     }
+
     function setGlobalText(value) {
       if (typeof globalThis.text === "string") globalThis.text = String(value || "");
     }
+
+    // ---- Generic configuration card -----------------------------------------
+    // All cast / protagonist / pressures / pacing are read from an editable Story
+    // Card. The engine holds no scenario-specific names.
     function defaultConfigEntry() {
       return [
         "LIVING CHARACTERS",
@@ -10418,6 +10599,14 @@ function MCPV5Create_living_characters() {
         "gossip",
         "misunderstanding",
         "",
+        "WORLD_EVENTS:",
+        "( Optional. One event per line -- type your own. )",
+        "( The narrator decides which characters get pulled in. )",
+        "( An event takes a card slot like any other Life Card. )",
+        "( Leave empty for no events. )",
+        "( A gun duel erupts in the street )",
+        "( A brawl breaks out in the saloon )",
+        "",
         "LIFE_CARD_INTERVAL:",
         "15",
         "",
@@ -10436,12 +10625,17 @@ function MCPV5Create_living_characters() {
         "( targets whom; leave it out for fully random behavior. See GitHub. )"
       ].join("\n");
     }
+
+    // The character roster lives in the config card's NOTES (description).
     function defaultConfigNotes() {
       return [
         "( Add one character name per line below. See GitHub for help. )",
         "Characters:"
       ].join("\n");
     }
+
+    // Parse a roster from NOTES text: one name per line, trimmed, blanks and
+    // ( comments ) ignored, multi-word names preserved.
     function isConfigSectionLabel(value) {
       const line = String(value || "").trim();
       const colon = line.indexOf(":");
@@ -10449,12 +10643,14 @@ function MCPV5Create_living_characters() {
       const head = line.slice(0, colon).trim().toLowerCase().replace(/\s+/g, "_");
       const labels = [
         "protagonist_name", "protagonist_involvement", "characters", "pressures",
+        "world_events",
         "life_card_interval", "social_activity", "target_cooldown", "max_active_cards",
         "scene_relevance_mode", "scene_relevance", "trigger_on_target",
-        "force_active_card_trigger", "protagonist_always_present"
+        "force_active_card_trigger", "protagonist_always_present", "world_events"
       ];
       return labels.indexOf(head) !== -1;
     }
+
     function parseRoster(notes) {
       const lines = String(notes || "").replace(/\r/g, "").split("\n");
       const out = [];
@@ -10466,6 +10662,7 @@ function MCPV5Create_living_characters() {
       }
       return out;
     }
+
     function ensureConfigCard() {
       const existing = findStoryCardByKeys(CFG.CONFIG_CARD_KEY) || findStoryCardByTitle(CFG.CONFIG_CARD_TITLE);
       if (existing) return existing;
@@ -10477,6 +10674,12 @@ function MCPV5Create_living_characters() {
         defaultConfigNotes()
       );
     }
+
+    // Auto-created template for the SEPARATE relationships card. Only lines BELOW the
+    // "Relationships:" header are parsed as rules (see parseRelationshipRules), so the
+    // preamble and the two example lines above it are NEVER treated as live rules -- a
+    // freshly created card carries ZERO active rules and behavior is identical to before
+    // until the user adds a line under "Relationships:".
     function defaultRelationshipsEntry() {
       return [
         "Per-character targeting",
@@ -10492,6 +10695,10 @@ function MCPV5Create_living_characters() {
         ""
       ].join("\n");
     }
+
+    // Auto-create the relationships card if it is missing, so users can discover and edit
+    // it -- mirroring ensureConfigCard/ensureThoughtConfigCard. The template has no rules
+    // under its "Relationships:" header, so it leaves behavior exactly as before.
     function ensureRelationshipsCard() {
       const existing = findStoryCardByKeys(CFG.REL_CARD_KEY) || findStoryCardByTitle(CFG.REL_CARD_TITLE);
       if (existing) return existing;
@@ -10503,8 +10710,9 @@ function MCPV5Create_living_characters() {
         "( Optional per-character targeting. Add rules under the Relationships: line. This card never enters the story. )"
       );
     }
+
     function parseConfigText(text, keysOverride) {
-      const KEYS = keysOverride || ["protagonist_name", "characters", "pressures", "life_card_interval", "social_activity", "target_cooldown", "max_active_cards", "scene_relevance_mode", "scene_relevance", "trigger_on_target", "force_active_card_trigger", "protagonist_always_present", "protagonist_involvement"];
+      const KEYS = keysOverride || ["protagonist_name", "characters", "pressures", "life_card_interval", "social_activity", "target_cooldown", "max_active_cards", "scene_relevance_mode", "scene_relevance", "trigger_on_target", "force_active_card_trigger", "protagonist_always_present", "protagonist_involvement", "world_events"];
       const lines = String(text || "").replace(/\r/g, "").split("\n");
       const sections = {};
       let current = "";
@@ -10524,6 +10732,7 @@ function MCPV5Create_living_characters() {
       }
       return sections;
     }
+
     function configFirst(sections, key, dflt) {
       const arr = sections[key];
       if (arr) {
@@ -10533,6 +10742,7 @@ function MCPV5Create_living_characters() {
       }
       return dflt;
     }
+
     function configList(sections, key) {
       const arr = sections[key] || [];
       const out = [];
@@ -10543,10 +10753,27 @@ function MCPV5Create_living_characters() {
       }
       return out;
     }
+
+    // Like configList, but PRESERVES the raw line text. configList runs cleanName, which
+    // strips punctuation and truncates at 50 chars -- right for names, wrong for an event
+    // sentence like "A gun duel erupts in the street."
+    function configTextList(sections, key) {
+      const arr = sections[key] || [];
+      const out = [];
+      for (let i = 0; i < arr.length; i++) {
+        const line = String(arr[i] || "").trim();
+        if (!line || line.charAt(0) === "(" || isConfigSectionLabel(line)) continue;
+        const v = cleanText(line);
+        if (v && out.indexOf(v) === -1) out.push(v);
+      }
+      return out;
+    }
+
     function toIntOr(value, dflt) {
       const n = parseInt(String(value).replace(/[^0-9-]/g, ""), 10);
       return isNaN(n) ? dflt : n;
     }
+
     function toBoolOr(value, dflt) {
       if (value == null) return dflt;
       const s = String(value).trim().toLowerCase();
@@ -10554,12 +10781,18 @@ function MCPV5Create_living_characters() {
       if (s === "false" || s === "no" || s === "off" || s === "0") return false;
       return dflt;
     }
+
     function buildRuntimeConfig() {
       ensureConfigCard();
       const card = findStoryCardByKeys(CFG.CONFIG_CARD_KEY) || findStoryCardByTitle(CFG.CONFIG_CARD_TITLE);
       const sections = parseConfigText(card && card.entry);
+
       let protagonist = cleanName(configFirst(sections, "protagonist_name", ""));
       if (/^none$/i.test(protagonist) || /^n\/?a$/i.test(protagonist)) protagonist = "";
+
+      // Roster: prefer the card NOTES (description). The old default NOTES string is
+      // not a roster, so ignore it. Fall back to the legacy ENTRY CHARACTERS section
+      // for older cards so they do not break.
       const notes = (card && card.description) || "";
       let rosterSource = "NOTES";
       let characters = (String(notes).trim() === CFG.LEGACY_CONFIG_NOTES) ? [] : parseRoster(notes);
@@ -10568,8 +10801,18 @@ function MCPV5Create_living_characters() {
         rosterSource = characters.length ? "ENTRY (legacy)" : "none";
       }
       characters = characters.filter(function(n) { return n && n !== protagonist; });
+
       let pressures = configList(sections, "pressures").map(function(p) { return p.toLowerCase(); });
       if (!pressures.length) pressures = CFG.DEFAULT_PRESSURES.slice();
+
+      // WORLD_EVENTS: optional authored list, one event per line. Raw text is preserved.
+      // Empty (the default) -> the "event" seat in the round-robin falls through to the
+      // character pools, so an existing story behaves exactly as before.
+      const worldEvents = configTextList(sections, "world_events");
+
+      // LIFE_CARD_INTERVAL -> turns between Life Card attempts. 0 disables generation.
+      // SOCIAL_ACTIVITY is deprecated; if an old card has it but no LIFE_CARD_INTERVAL,
+      // auto-convert the keyword to the matching interval (no silent Balanced fallback).
       const intervalRaw = configFirst(sections, "life_card_interval", null);
       const legacyRaw = configFirst(sections, "social_activity", null);
       let legacyActivityUsed = false;
@@ -10587,11 +10830,19 @@ function MCPV5Create_living_characters() {
       }
       const activityOff = (interval <= 0);
       const activityTurns = activityOff ? 0 : Math.max(1, interval);
+
       const targetCooldown = Math.max(0, toIntOr(configFirst(sections, "target_cooldown", CFG.DEFAULT_TARGET_COOLDOWN), CFG.DEFAULT_TARGET_COOLDOWN));
+      // Configurable, clamped to 1-2 (3+ not allowed for now).
+      //   1 = focused mode (one storyline at a time)
+      //   2 = layered mode (two interwoven threads)
       const maxActive = Math.max(1, Math.min(2, toIntOr(configFirst(sections, "max_active_cards", CFG.MAX_ACTIVE_LIFE_CARDS), CFG.MAX_ACTIVE_LIFE_CARDS)));
       const triggerOnTarget = toBoolOr(configFirst(sections, "trigger_on_target", null), CFG.TRIGGER_ON_TARGET);
       const forceActiveCardTrigger = toBoolOr(configFirst(sections, "force_active_card_trigger", null), CFG.FORCE_ACTIVE_CARD_TRIGGER);
       const protagonistAlwaysPresent = toBoolOr(configFirst(sections, "protagonist_always_present", null), CFG.PROTAGONIST_ALWAYS_PRESENT);
+
+      // Scene relevance mode: strict | off | hybrid (validated; default strict).
+      // Accept both SCENE_RELEVANCE_MODE and the SCENE_RELEVANCE alias. Prefer
+      // SCENE_RELEVANCE_MODE if present, else SCENE_RELEVANCE, else the default.
       let sceneMode = String(
         configFirst(
           sections,
@@ -10600,18 +10851,45 @@ function MCPV5Create_living_characters() {
         )
       ).toLowerCase().replace(/\s+/g, "");
       if (sceneMode !== "strict" && sceneMode !== "off" && sceneMode !== "hybrid") sceneMode = CFG.SCENE_RELEVANCE_MODE;
+
+      // Two INDEPENDENT cadences (decoupled), hardwired internally and NOT exposed on the
+      // public config card. Adjust the CFG constants if needed.
+      //   CHECKPOINT_EVERY      -> write-back (LC_MEMORY) opportunity only. No lifespan effect.
+      //   THREAD_REMINDER_EVERY -> dormancy/reminder aging only (card lifespan).
       const checkpointEvery = CFG.CHECKPOINT_EVERY;
       const threadReminderEvery = CFG.THREAD_REMINDER_EVERY;
+
+      // Protagonist involvement: off | normal | high | always (validated; default normal).
+      // TARGET-side bias only -- never makes the protagonist an owner. With no protagonist
+      // configured the bias is meaningless, so it degrades safely to "normal".
       let involvement = String(configFirst(sections, "protagonist_involvement", CFG.PROTAGONIST_INVOLVEMENT)).toLowerCase().replace(/\s+/g, "");
       if (involvement !== "off" && involvement !== "normal" && involvement !== "high" && involvement !== "always") involvement = CFG.PROTAGONIST_INVOLVEMENT;
       if (!protagonist) involvement = "normal";
+
+      // RELATIONSHIPS: optional directed steering rules (seed-time only), read from a
+      // SEPARATE Story Card (engine config vs. story relationship data). If the card is
+      // absent, rel is empty and the engine behaves exactly as before. Rules are read
+      // from the card's ENTRY and NOTES (either place works), parsed AFTER the roster and
+      // protagonist so names can canonicalize against the roster.
       ensureRelationshipsCard();
       const relCard = findStoryCardByKeys(CFG.REL_CARD_KEY) || findStoryCardByTitle(CFG.REL_CARD_TITLE);
       const relationshipsCardFound = !!relCard;
       const relText = relCard ? (String(relCard.entry || "") + "\n" + String(relCard.description || "")) : "";
       const relLines = relText ? relText.replace(/\r/g, "").split("\n") : [];
       const rel = parseRelationshipRules(relLines, characters, protagonist);
+
+      // A RELATIONSHIPS section left over in the OLD location (the main config card) is
+      // no longer read here -- flag it so the debug card can tell the user to move it.
       const mainConfigHadRelationships = /(^|\n)\s*relationships\s*:/i.test(String(card && card.entry) || "");
+
+      // Expand the cast so relationship rules do NOT require duplicating names in the
+      // roster: runtime actors = roster actors + relationship owners + relationship
+      // targets. Relationship-only names become valid characters (scene detection,
+      // random target pools, etc.); the protagonist is still excluded from the NPC cast.
+      // rosterCharacters is captured BEFORE expansion: it is the set eligible for RANDOM
+      // owner selection. Relationship-only TARGETS are added to the cast (valid targets +
+      // scene-detectable) but are NOT random owners unless they also appear here or hold
+      // their own rule -- see ownerCandidates().
       const rosterActorCount = characters.length;
       const rosterCharacters = characters.slice();
       const relNameSet = {};
@@ -10625,12 +10903,14 @@ function MCPV5Create_living_characters() {
         if (characters.indexOf(relNames[ri]) === -1) relActorCount++;
       }
       characters = unique(characters.concat(relNames)).filter(function(n) { return n && n !== protagonist; });
+
       return {
         protagonist: protagonist,
         characters: characters,
         rosterCharacters: rosterCharacters,
         rosterSource: rosterSource,
         pressures: pressures,
+        worldEvents: worldEvents,
         activityOff: activityOff,
         activityTurns: activityTurns,
         legacyActivityUsed: legacyActivityUsed,
@@ -10652,8 +10932,13 @@ function MCPV5Create_living_characters() {
         threadReminderEvery: threadReminderEvery
       };
     }
+
     function ensureState() {
       if (!globalThis.state || typeof state !== "object") globalThis.state = {};
+      // NOTE: the persistent save key is intentionally kept as `chaosGoblinV2` for
+      // backward compatibility — existing adventures store their Life Threads here.
+      // Renaming it would orphan every saved thread, so the key stays; only the
+      // surrounding code/naming is modernized. `lc` below is the live engine state.
       if (!state.chaosGoblinV2) {
         state.chaosGoblinV2 = {
           version: CFG.VERSION,
@@ -10673,8 +10958,15 @@ function MCPV5Create_living_characters() {
       if (!cg.cards || typeof cg.cards !== "object") cg.cards = {};
       if (!cg.actorSeedIndex || typeof cg.actorSeedIndex !== "object") cg.actorSeedIndex = {};
       if (typeof cg.seedCount !== "number") cg.seedCount = 0;
-      if (cg.seedPhase !== "relationship" && cg.seedPhase !== "random") cg.seedPhase = "relationship";
+      // Round-robin phase: which owner type is TRIED first next seed. Default to
+      // "relationship" so the very first generated card prefers a relationship rule.
+      if (cg.seedPhase !== "relationship" && cg.seedPhase !== "random" && cg.seedPhase !== "event") cg.seedPhase = "relationship";
+      // Round-robin CYCLE index into CFG.SEED_CYCLE. Migrated from the legacy 2-way
+      // seedPhase toggle so existing saves keep their place in the rotation.
+      if (typeof cg.seedCycleIndex !== "number") cg.seedCycleIndex = (cg.seedPhase === "random") ? 1 : 0;
       if (!Array.isArray(cg.recentSeeds)) cg.recentSeeds = [];
+      // Migrate legacy recentSeeds entries (plain signature strings, never-expiring)
+      // to { sig, turn } stamped with the current turn so they age out normally.
       for (let i = 0; i < cg.recentSeeds.length; i++) {
         if (typeof cg.recentSeeds[i] === "string") {
           cg.recentSeeds[i] = { sig: cg.recentSeeds[i], turn: cg.turn || 0 };
@@ -10683,6 +10975,7 @@ function MCPV5Create_living_characters() {
       if (!Array.isArray(cg.recentMemory)) cg.recentMemory = [];
       return cg;
     }
+
     function cleanText(value) {
       return String(value || "")
         .replace(/\r/g, "")
@@ -10690,24 +10983,34 @@ function MCPV5Create_living_characters() {
         .replace(/\n{3,}/g, "\n\n")
         .trim();
     }
+
+    // Leading whitespace run (spaces/tabs/newlines) of a string, or "". Used to PRESERVE the
+    // separator the model puts before a continuation -- cleanText's trim() would remove it and
+    // jam the new narration onto the prior story text.
     function leadingWhitespace(s) {
       const m = /^[ \t\r\n]+/.exec(String(s || ""));
       return m ? m[0] : "";
     }
+
+    // Normalize a leading-whitespace run to exactly ONE safe separator so restoring it never
+    // reintroduces sloppy spacing: a paragraph break, a single newline, or a single space.
     function leadSeparator(ws) {
       if (/\n[ \t]*\n/.test(ws)) return "\n\n";
       if (/\n/.test(ws)) return "\n";
       if (/[ \t]/.test(ws)) return " ";
       return "";
     }
+
     function cleanName(value) {
       let s = String(value || "").replace(/[^A-Za-z0-9 _'-]/g, " ").trim();
       s = s.replace(/\s+/g, " ");
       return s.slice(0, 50);
     }
+
     function keyName(name) {
       return cleanName(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
     }
+
     function containsWholeWord(text, word) {
       text = String(text || "").toLowerCase();
       word = String(word || "").toLowerCase();
@@ -10723,6 +11026,7 @@ function MCPV5Create_living_characters() {
       }
       return false;
     }
+
     function unique(list) {
       const out = [];
       for (let i = 0; i < list.length; i++) {
@@ -10731,15 +11035,25 @@ function MCPV5Create_living_characters() {
       }
       return out;
     }
+
     function playerName() {
       return LC.protagonist || "";
     }
+
     function npcRoster() {
       const p = playerName();
       return unique(LC.characters || []).filter(function(name) {
         return name !== p;
       });
     }
+
+    // Scene detector: which configured characters (protagonist + roster) appear in
+    // the recent context. Scans the TAIL of the context (the current scene), matches
+    // whole words/phrases so multi-word names work, and includes the protagonist so
+    // the engine knows when the player is present.
+    // Text for the CURRENT scene. Prefer recent story actions (history), which EXCLUDE
+    // story-card entries, memory, author's note, and injected notes — so strict scene
+    // relevance means "in the visible scene", not "named somewhere in context".
     function recentSceneText(contextFallback) {
       const cg = ensureState();
       if (Array.isArray(globalThis.history) && history.length) {
@@ -10755,25 +11069,32 @@ function MCPV5Create_living_characters() {
       const text = String(contextFallback || "");
       return text.length > CFG.SCENE_SCAN_CHARS ? text.slice(-CFG.SCENE_SCAN_CHARS) : text;
     }
+
     function sceneActors(text) {
       const recent = recentSceneText(text);
       const p = playerName();
       const found = [];
+      // Protagonist is present by default (second-person "you" rarely names them).
       if (p && LC.protagonistAlwaysPresent) found.push(p);
+      // NPCs are detected by name in the recent scene text.
       const names = npcRoster();
       for (let i = 0; i < names.length; i++) {
         if (names[i] && containsWholeWord(recent, names[i])) found.push(names[i]);
       }
+      // Also detect the protagonist by name (third-person stories that name them).
       if (p && found.indexOf(p) === -1 && containsWholeWord(recent, p)) found.push(p);
       return unique(found);
     }
+
     function randomInt(max) {
       return Math.floor(Math.random() * Math.max(1, max));
     }
+
     function choose(list) {
       if (!list || !list.length) return "";
       return list[randomInt(list.length)];
     }
+
     function weightedChoice(pairs) {
       let total = 0;
       for (let i = 0; i < pairs.length; i++) total += Math.max(0, Number(pairs[i][1]) || 0);
@@ -10785,6 +11106,7 @@ function MCPV5Create_living_characters() {
       }
       return pairs[pairs.length - 1][0];
     }
+
     function ensureCardBucket(owner) {
       owner = cleanName(owner);
       if (!owner) return null;
@@ -10806,9 +11128,11 @@ function MCPV5Create_living_characters() {
       if (typeof b.reminderCount !== "number") b.reminderCount = 0;
       return b;
     }
+
     function eventFingerprint(line) {
       return cleanText(line).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 120);
     }
+
     function appendEventLog(bucket, line) {
       line = cleanText(line);
       if (!bucket || !line) return;
@@ -10819,33 +11143,53 @@ function MCPV5Create_living_characters() {
       bucket.eventLog.push(line);
       while (bucket.eventLog.length > CFG.MAX_EVENT_LOG) bucket.eventLog.shift();
     }
+
     function applyMemory(memory) {
       const owner = cleanName(memory.owner);
       if (!owner) return false;
       const bucket = ensureCardBucket(owner);
       if (!bucket) return false;
+
+      // Narrator authors the specific EVENT. System keeps PRESSURE/TARGET/MOMENTUM,
+      // but fill them from memory if the card has none yet.
       if (memory.event) bucket.event = cleanText(memory.event);
       if (memory.target && !cleanText(bucket.target)) bucket.target = cleanName(memory.target);
       if (memory.pressure && !cleanText(bucket.pressure)) bucket.pressure = cleanText(memory.pressure);
       if (memory.momentum && !cleanText(bucket.momentum)) bucket.momentum = cleanText(memory.momentum);
+      // Optional first-person thought: update only when the narrator supplies a non-empty
+      // value; never blank an existing thought. Display-only, never used in engine logic.
+      // NOTE: this legacy OWNER_THOUGHT lives on the Life Card and is fed by the LC_MEMORY
+      // write-back (XML-style block authored by the narrator). It is SEPARATE from the
+      // Thought Card system: Thought Cards do NOT use LC_MEMORY, XML, or narrator write-back
+      // -- they use the leading-parenthetical capture and store to their own "💭 Thoughts"
+      // cards. The two are independent; see the THOUGHT CARD SYSTEM module below.
       if (cleanText(memory.owner_thought)) bucket.ownerThought = cleanText(memory.owner_thought);
+
       const status = cleanText(memory.status).toLowerCase();
       bucket.status = CFG.STATUS_VALUES.indexOf(status) !== -1 ? status : (bucket.status || "active");
       bucket.reminderCount = 0; // narrator touched it; restart the dormancy clock
+
       appendEventLog(bucket, memory.log || memory.event);
+
+      // Resolved threads archive permanently: drop the Story Card. HISTORY stays in
+      // state so the character keeps a long-term social record.
       if (bucket.status === "resolved") {
         removeStoryCardByKeys(storyCardIdToken(owner));
       }
+
       const cg = ensureState();
       cg.recentMemory.push(owner + ": " + (memory.event || memory.log || ""));
       while (cg.recentMemory.length > 12) cg.recentMemory.shift();
+
       if (cg.pendingSeed && (owner === cg.pendingSeed.actor || owner === cg.pendingSeed.target)) {
         cg.pendingSeed = null;
       }
       return true;
     }
+
     function renderCardEntry(bucket) {
       const status = cleanText(bucket.status) || "active";
+      // Dormant = archived record: STATUS only. HISTORY is in the card description.
       if (status.toLowerCase() === "dormant") return "STATUS: dormant";
       if (!cardHasContent(bucket)) return "";
       const target = cleanText(bucket.target) || "someone";
@@ -10853,13 +11197,16 @@ function MCPV5Create_living_characters() {
       const momentum = cleanText(bucket.momentum) || "low";
       const occurrence = cleanText(bucket.event);
       const ownerThought = cleanText(bucket.ownerThought);
+      // Seedling shows only while the thread is active; dropped when dormant/resolved.
       const statusLine = lifeStatusIsActive(status) ? (CFG.SEEDLING + " " + status) : status;
+      // Compact one-line-per-field format (no blank lines) to keep Story Cards small.
       const out = ["TARGET: " + target, "PRESSURE: " + pressure];
       if (occurrence) out.push("OCCURRENCE: " + occurrence); // only if narrator authored it
       if (ownerThought) out.push("OWNER_THOUGHT: " + ownerThought); // LC_MEMORY-fed (legacy)
       out.push("MOMENTUM: " + momentum, "STATUS: " + statusLine);
       return out.join("\n");
     }
+
     function renderCardDescription(bucket) {
       const lines = bucket.eventLog || [];
       if (!lines.length) return "HISTORY:\n";
@@ -10867,9 +11214,16 @@ function MCPV5Create_living_characters() {
       for (let i = 0; i < lines.length; i++) out.push("[" + (i + 1) + "] " + lines[i]);
       return out.join("\n");
     }
+
+    // Stable per-character identity token. Never changes across a character's life
+    // (even when the target changes). Used ONLY for lookup/removal.
     function storyCardIdToken(owner) {
       return CFG.LIFE_CARD_KEY_PREFIX + keyName(owner);
     }
+
+    // Visible trigger list = identity token + owner name + (NPC target, if enabled).
+    // Joined with "," and no trailing space. The protagonist, empty targets, and
+    // "someone" placeholders are never added as triggers.
     function storyCardTriggers(bucket) {
       const owner = cleanName(bucket.owner);
       let triggers = storyCardIdToken(owner) + "," + owner;
@@ -10880,25 +11234,34 @@ function MCPV5Create_living_characters() {
           triggers += "," + target;
         }
       }
+      // Shared trigger token: only added here, and syncCards only runs for ACTIVE
+      // cards, so dormant/resolved cards never carry it.
       if (LC.forceActiveCardTrigger && CFG.ACTIVE_SHARED_TRIGGER) {
         triggers += "," + CFG.ACTIVE_SHARED_TRIGGER;
       }
+      // Experiment: add the second-person word "you" as a trigger on every card so that in a
+      // second-person story (where "you" is ever-present) AI Dungeon matches every card.
       triggers += ",you";
       return triggers;
     }
+
+    // Identity = the FIRST trigger token only (normalized), never the full list.
     function keyIdToken(keys) {
       const s = String(keys || "");
       const comma = s.indexOf(",");
       return (comma === -1 ? s : s.slice(0, comma)).replace(/\s+/g, "").toLowerCase();
     }
+
     function cardTitle(owner, status) {
       const prefix = (CFG.SEEDLING_IN_TITLE && lifeStatusIsActive(status)) ? (CFG.SEEDLING + " ") : "";
       return prefix + CFG.LIFE_CARD_TITLE_PREFIX + owner;
     }
+
     function isUnnamedish(value) {
       const s = String(value || "").trim().toLowerCase();
       return !s || s === "unnamed" || s === "untyped" || s === "first name";
     }
+
     function findStoryCardByTitle(title) {
       if (!Array.isArray(globalThis.storyCards)) return null;
       for (let i = 0; i < storyCards.length; i++) {
@@ -10907,6 +11270,10 @@ function MCPV5Create_living_characters() {
       }
       return null;
     }
+
+    // Stable identity lookup by the FIRST trigger token (not the full trigger list),
+    // so adding/removing a target trigger never changes a card's identity. Titles can
+    // change (seedling on/off, Chaos->Life); the token stays constant.
     function findStoryCardByKeys(keys) {
       if (!Array.isArray(globalThis.storyCards)) return null;
       const token = keyIdToken(keys);
@@ -10916,6 +11283,9 @@ function MCPV5Create_living_characters() {
       }
       return null;
     }
+
+    // Remove a Story Card by its identity token so an archived thread leaves the card
+    // list and stays gone (syncCards will not recreate a non-active bucket).
     function removeStoryCardByKeys(keys) {
       if (!keys || !Array.isArray(globalThis.storyCards)) return;
       const token = keyIdToken(keys);
@@ -10930,10 +11300,12 @@ function MCPV5Create_living_characters() {
         }
       }
     }
+
     function createOrPatchStoryCard(title, type, keys, entry, description) {
       if (isUnnamedish(title) || isUnnamedish(type) || !keys || !entry) return null;
       let card = findStoryCardByKeys(keys) || findStoryCardByTitle(title);
       const beforeLength = Array.isArray(globalThis.storyCards) ? storyCards.length : -1;
+
       if (!card && typeof addStoryCard === "function") {
         try {
           const created = addStoryCard(keys, entry, type);
@@ -10943,13 +11315,16 @@ function MCPV5Create_living_characters() {
           card = null;
         }
       }
+
       if (!card && Array.isArray(globalThis.storyCards) && storyCards.length > beforeLength) {
         card = storyCards[storyCards.length - 1];
       }
+
       if (!card && Array.isArray(globalThis.storyCards)) {
         card = {};
         storyCards.push(card);
       }
+
       if (!card || typeof card !== "object") return null;
       card.title = title;
       card.type = type;
@@ -10958,13 +11333,18 @@ function MCPV5Create_living_characters() {
       card.description = description || "";
       return card;
     }
+
     function syncCards() {
       const cg = ensureState();
       const owners = Object.keys(cg.cards || {});
       for (let i = 0; i < owners.length; i++) {
         const owner = owners[i];
         const bucket = cg.cards[owner];
+        // Only live threads sync. Dormant/resolved buckets are archived in state
+        // (HISTORY preserved) and must NOT be recreated as Story Cards.
         if (!cardHasContent(bucket) || !lifeStatusIsActive(bucket.status)) continue;
+        // World events render as an event, not as an owner/target pressure card.
+        if (isEventBucket(bucket)) { syncWorldEventCard(bucket); continue; }
         const entry = renderCardEntry(bucket);
         if (!entry) continue;
         createOrPatchStoryCard(
@@ -10976,6 +11356,9 @@ function MCPV5Create_living_characters() {
         );
       }
     }
+
+    // Read a labeled field's value from a rendered Story Card entry. Handles the
+    // compact inline form ("LABEL: value") and the older "LABEL:" + next-line form.
     function extractEntryField(entry, label) {
       const lines = String(entry || "").replace(/\r/g, "").split("\n");
       const want = label.toUpperCase() + ":";
@@ -10991,6 +11374,9 @@ function MCPV5Create_living_characters() {
       }
       return "";
     }
+
+    // Per active card: compare the INTERNAL bucket (source for injection + render)
+    // against the VISIBLE Story Card entry, and flag stale (non-config) pressures.
     function cardAuditLines() {
       const cg = ensureState();
       const owners = Object.keys(cg.cards || {});
@@ -10998,6 +11384,7 @@ function MCPV5Create_living_characters() {
       for (let i = 0; i < owners.length; i++) {
         const b = cg.cards[owners[i]];
         if (!cardHasContent(b) || !lifeStatusIsActive(b.status)) continue;
+        if (isEventBucket(b)) continue; // world events have no owner/target/pressure to audit
         const bP = cleanText(b.pressure), bT = cleanText(b.target);
         const card = findStoryCardByKeys(storyCardIdToken(owners[i]));
         const cP = card ? extractEntryField(card.entry, "PRESSURE") : "";
@@ -11012,6 +11399,7 @@ function MCPV5Create_living_characters() {
       }
       return out.length ? out.join("\n") : "AUDIT: no active cards";
     }
+
     function updateDebugCard() {
       if (!CFG.DEBUG) { removeStoryCardByKeys(CFG.DEBUG_CARD_KEY); return; }
       const cg = ensureState();
@@ -11070,6 +11458,14 @@ function MCPV5Create_living_characters() {
         "candidateCards: " + ((cg.lastCandidateTrace && cg.lastCandidateTrace.length) ? cg.lastCandidateTrace.join(" | ") : "(none)"),
         "selectedCards / injectedCards: " + ((cg.lastSelectedTrace && cg.lastSelectedTrace.length) ? cg.lastSelectedTrace.join(" | ") : "(none)"),
         "freshThreads (marked URGENT): " + ((cg.lastFreshThreads && cg.lastFreshThreads.length) ? cg.lastFreshThreads.join(", ") : "(none)"),
+        "worldEvents configured: " + (LC.worldEvents ? LC.worldEvents.length : 0) +
+          " | live: " + (function () {
+            const b = ensureState().cards[CFG.EVENT_BUCKET_KEY];
+            return (b && cardHasContent(b) && lifeStatusIsActive(b.status))
+              ? ("\"" + cleanText(b.worldEvent) + "\" (since turn " + (b.createdTurn || 0) + ", normal life-card lifespan)")
+              : "(none)";
+          })(),
+        "seedCycle: [" + CFG.SEED_CYCLE.join(", ") + "] | next=" + CFG.SEED_CYCLE[((cg.seedCycleIndex || 0) % CFG.SEED_CYCLE.length)],
         cardAuditLines(),
         "archivedLifeCards (dormant/resolved): " + dormant + "/" + resolved,
         "cards (live/total): " + live + "/" + owners.length,
@@ -11084,6 +11480,14 @@ function MCPV5Create_living_characters() {
         "Diagnostic only. Set DEBUG = false to disable."
       );
     }
+
+    // Names eligible to OWN a Life Card:
+    //   - roster NPCs (the classic random owners), and
+    //   - any name with its OWN relationship rule (a ruled owner; may be the protagonist).
+    // Relationship-only TARGETS are deliberately excluded: being named as someone's target
+    // makes a character a valid target and scene-detectable, but NEVER a random owner. A
+    // target-only name only becomes an owner if it also appears in the roster or gains its
+    // own rule.
     function ownerCandidates() {
       const p = playerName();
       const set = {};
@@ -11091,12 +11495,20 @@ function MCPV5Create_living_characters() {
       for (let i = 0; i < roster.length; i++) {
         if (roster[i] && roster[i] !== p) set[roster[i]] = true;
       }
+      // Ruled owners (the keys of the relationships map). The protagonist is allowed here
+      // ONLY via an explicit rule; random selection still never makes them an owner.
       const owners = Object.keys(LC.relationships || {});
       for (let i = 0; i < owners.length; i++) {
         if (owners[i]) set[owners[i]] = true;
       }
       return Object.keys(set);
     }
+
+    // Eligible actors = ownerCandidates, minus characters who already hold an active Life
+    // thread (one per character -- so a ruled owner with a live card is skipped, and the
+    // engine does NOT compensate by promoting that owner's target to a random owner), minus
+    // characters still inside their TARGET_COOLDOWN (counted in Life Cards, not turns). When
+    // the owner's card archives, they return here and may seed again from their rule targets.
     function actorPool() {
       const cg = ensureState();
       return unique(ownerCandidates()).filter(function(name) {
@@ -11108,16 +11520,42 @@ function MCPV5Create_living_characters() {
         return true;
       });
     }
+
     function targetPool(actor) {
       const p = playerName();
       return unique([p].concat(npcRoster())).filter(function(name) {
         return name && name !== actor;
       });
     }
+
+    // ---- RELATIONSHIPS: directed steering rules (seed-time only) -------------
+    // Optional "Owner > Target [xN] [= pressure, pressure]" lines from the dedicated
+    // LIVING CHARACTERS RELATIONSHIPS card. Rules narrow WHAT seeds (target set and
+    // pressure pool), never WHEN: pacing, cooldowns, slot caps, dormancy, and
+    // existing/pending cards are untouched. An owner with at least one rule ONLY
+    // targets listed characters (fail closed when none is currently legal -- never a
+    // random fallback); owners without rules keep the original random behavior exactly.
+
+    // Parse the RELATIONSHIPS card lines. STRUCTURE is parsed FIRST (">", "=", ",",
+    // trailing " xN") and names are cleaned AFTER -- cleanName strips those symbols,
+    // so it must never see the raw line. Invalid rules are skipped and reported;
+    // for duplicate directed pairs the LAST valid rule wins.
+    //
+    // NAME RESOLUTION is liberal (no roster membership required):
+    //   - "You" / "Protagonist" (and the protagonist's own name) -> PROTAGONIST_NAME.
+    //   - A name matching the roster (case-insensitive) canonicalizes to the roster
+    //     spelling so "jessica" and "Jessica" are the same character.
+    //   - ANY OTHER non-empty name is accepted as a new relationship-only character;
+    //     the caller folds these into the runtime cast, so users never duplicate names.
+    // The protagonist MAY own a rule. Only self-targeting is rejected.
     function parseRelationshipRules(rawLines, characters, protagonist) {
       const rules = {};  // owner -> [{ target, pressures: array|null, weight }]
       const notes = [];
       let count = 0;
+
+      // Canonical-name resolver. Roster spellings are authoritative; the first spelling
+      // seen wins for any relationship-only name. Returns "" only for empty input or an
+      // unresolvable You/Protagonist (no PROTAGONIST_NAME set).
       const canon = {};
       for (let i = 0; i < (characters || []).length; i++) {
         const c = cleanName(characters[i]);
@@ -11134,6 +11572,11 @@ function MCPV5Create_living_characters() {
         canon[low] = c;
         return c;
       }
+
+      // SECTIONING: rules are only read AFTER a "Relationships:" (or "RELATIONSHIPS")
+      // header line. This lets the card carry a title, an "Example:" label, and example
+      // lines ABOVE the header without them ever being parsed as live rules. If no header
+      // line exists, every line is considered (backward compatible with header-less cards).
       let lines = rawLines || [];
       for (let h = 0; h < lines.length; h++) {
         if (/^\s*relationships\s*:?\s*$/i.test(String(lines[h] || ""))) { lines = lines.slice(h + 1); break; }
@@ -11143,6 +11586,8 @@ function MCPV5Create_living_characters() {
         if (!raw || raw.charAt(0) === "(") continue;
         const gt = raw.indexOf(">");
         if (gt === -1) {
+          // A label line ending in ":" or a stray "relationships" header is silent; other
+          // non-rule lines are noted so typos are visible on the debug card.
           if (!/:$/.test(raw) && !/^relationships$/i.test(raw)) notes.push("ignored (no '>'): " + raw.slice(0, 60));
           continue;
         }
@@ -11151,14 +11596,20 @@ function MCPV5Create_living_characters() {
         let listRaw = null;
         const eq = targetRaw.indexOf("=");
         if (eq !== -1) { listRaw = targetRaw.slice(eq + 1); targetRaw = targetRaw.slice(0, eq); }
+        // Optional trailing weight on the target segment: "Target x3".
         let weight = 1;
         const wm = /\sx(\d+)\s*$/i.exec(targetRaw);
         if (wm) { weight = Math.max(1, toIntOr(wm[1], 1)); targetRaw = targetRaw.slice(0, wm.index); }
+
         const owner = resolve(ownerRaw);
         if (!owner) { notes.push("ignored (unresolved owner \"" + (cleanName(ownerRaw) || "?") + "\" -- set PROTAGONIST_NAME to use You/Protagonist)"); continue; }
         const target = resolve(targetRaw);
         if (!target) { notes.push("ignored (unresolved target \"" + (cleanName(targetRaw) || "?") + "\" for " + owner + ")"); continue; }
         if (target === owner) { notes.push("ignored (self-target): " + owner); continue; }
+
+        // Pressure list: cleaned the same way as the global PRESSURES pool
+        // (cleanName + lowercase) so comparisons and audits line up. Pressures NOT
+        // in the global pool are allowed on purpose (pair-specific pressures).
         let pressures = null;
         if (listRaw != null) {
           const parts = String(listRaw).split(",");
@@ -11170,6 +11621,7 @@ function MCPV5Create_living_characters() {
           if (list.length) pressures = list;
           else notes.push("empty pressure list (global pool used): " + owner + " > " + target);
         }
+
         if (!rules[owner]) rules[owner] = [];
         let replaced = false;
         for (let j = 0; j < rules[owner].length; j++) {
@@ -11188,10 +11640,12 @@ function MCPV5Create_living_characters() {
       while (notes.length > 12) notes.pop();
       return { rules: rules, notes: notes, count: count };
     }
+
     function ownerRules(owner) {
       const list = (LC.relationships || {})[owner];
       return (list && list.length) ? list : null;
     }
+
     function ruleFor(owner, target) {
       const list = ownerRules(owner);
       if (!list) return null;
@@ -11200,9 +11654,15 @@ function MCPV5Create_living_characters() {
       }
       return null;
     }
+
+    // True when `owner` may target `target`: unruled owners may target anyone,
+    // ruled owners only characters in their configured set.
     function canTarget(owner, target) {
       return !ownerRules(owner) || !!ruleFor(owner, target);
     }
+
+    // True when `owner` could seed SOME target right now: unruled, or at least one
+    // configured target is currently in their legal target pool.
     function hasLegalRuleTarget(owner) {
       const list = ownerRules(owner);
       if (!list) return true;
@@ -11212,6 +11672,9 @@ function MCPV5Create_living_characters() {
       }
       return false;
     }
+
+    // True when a pressure appears in ANY relationship rule's list, so the debug
+    // audit does not flag legitimate pair-specific pressures as stale.
     function isRulePressure(p) {
       p = cleanText(p).toLowerCase();
       if (!p) return false;
@@ -11224,6 +11687,9 @@ function MCPV5Create_living_characters() {
       }
       return false;
     }
+
+    // Compact resolved-rule summary for the debug card, e.g.
+    // "Jessica > [Sam x3 (=jealousy, attraction), Tristan]".
     function relationshipRuleLines() {
       const owners = Object.keys(LC.relationships || {});
       const parts = [];
@@ -11239,11 +11705,21 @@ function MCPV5Create_living_characters() {
       }
       return parts.length ? parts.join(" ; ") : "(none)";
     }
+
+    // Choose a TARGET for a given (already-selected NPC) owner, applying the
+    // PROTAGONIST_INVOLVEMENT bias. This only ever influences who is TARGETED; owner
+    // selection (actorPool) and the never-an-owner rule are untouched. With no
+    // protagonist, LC.protagonistInvolvement is forced to "normal" upstream, so this
+    // behaves exactly like the original choose(targetPool(actor)).
     function chooseTarget(actor) {
       const p = playerName();
       const mode = LC.protagonistInvolvement || "normal";
       const pool = targetPool(actor);
       if (!pool.length) return "";
+      // RELATIONSHIPS steering: a ruled owner's target ALWAYS comes from their rules
+      // (weighted via weightedChoice), overriding PROTAGONIST_INVOLVEMENT for that
+      // owner. If no configured target is currently legal, fail closed with "" --
+      // the caller skips this seed; a ruled owner NEVER falls back to a random target.
       const rules = ownerRules(actor);
       if (rules) {
         const pairs = [];
@@ -11253,19 +11729,28 @@ function MCPV5Create_living_characters() {
         return pairs.length ? weightedChoice(pairs) : "";
       }
       const protagInPool = !!p && pool.indexOf(p) !== -1;
+
       if (mode === "off") {
+        // Exclude the protagonist absolutely. If no NPC target remains, choose([])
+        // returns "" and the caller safely skips the card (never falls back to the
+        // protagonist) -- "off" means the protagonist is never targeted.
         const npcOnly = pool.filter(function(n) { return n !== p; });
         return choose(npcOnly);
       }
       if (mode === "always" && protagInPool) {
+        // Use the protagonist as target when legal. (Owner stays an NPC; cooldown and
+        // scene relevance are still enforced by the surrounding selection logic.)
         return p;
       }
       if (mode === "high" && protagInPool) {
+        // Protagonist gets ~3x the weight of a single NPC; NPC-to-NPC still happens.
         const pairs = pool.map(function(n) { return [n, n === p ? 3 : 1]; });
         return weightedChoice(pairs);
       }
+      // normal (and high/always with no eligible protagonist target): current behavior.
       return choose(pool);
     }
+
     function cardReason(actor, target, category) {
       const cg = ensureState();
       const actorCard = cg.cards[actor];
@@ -11276,9 +11761,13 @@ function MCPV5Create_living_characters() {
       }
       return actor + " has enough social momentum around " + target + " for a " + category + " move.";
     }
+
     function seedSignature(seed) {
       return [seed.actor, seed.target, seed.category].join("|").toLowerCase();
     }
+
+    // Seed-dedup bookkeeping. Entries are { sig, turn } and EXPIRE after
+    // SEED_DEDUP_TTL_TURNS turns (see the CFG comment for why turn-based).
     function pruneRecentSeeds(cg) {
       const keep = [];
       for (let i = 0; i < cg.recentSeeds.length; i++) {
@@ -11287,6 +11776,7 @@ function MCPV5Create_living_characters() {
       }
       cg.recentSeeds = keep;
     }
+
     function isRecentSeed(sig) {
       const cg = ensureState();
       pruneRecentSeeds(cg);
@@ -11295,6 +11785,7 @@ function MCPV5Create_living_characters() {
       }
       return false;
     }
+
     function rememberSeed(seed) {
       const cg = ensureState();
       pruneRecentSeeds(cg);
@@ -11305,21 +11796,99 @@ function MCPV5Create_living_characters() {
       }
       if (!known) cg.recentSeeds.push({ sig: sig, turn: cg.turn });
       while (cg.recentSeeds.length > 20) cg.recentSeeds.shift();
+      // Count this Life Card and stamp the actor's card index for TARGET_COOLDOWN.
       cg.seedCount = (cg.seedCount || 0) + 1;
       cg.actorSeedIndex[seed.actor] = cg.seedCount;
     }
+
     function momentumForIntensity(intensity) {
       if (intensity === "major") return "high";
       if (intensity === "medium") return "medium";
       return "low";
     }
+
+    // True for a WORLD EVENT bucket: an event, not a person. Every character path checks
+    // this (never an actor, target, or scene presence). Keyed off `kind`, NOT the display
+    // name, so a character called "The World" could never be mistaken for the event card.
+    function isEventBucket(b) {
+      return !!(b && b.kind === "event");
+    }
+
+    // A card is meaningful once it carries system pressure or a narrator event. A world
+    // event carries its event text instead.
     function cardHasContent(b) {
+      if (isEventBucket(b)) return !!cleanText(b.worldEvent);
       return !!(b && (cleanText(b.pressure) || cleanText(b.event)));
     }
+
+    function worldEventSignature(text) {
+      return CFG.EVENT_BUCKET_KEY + "||" + cleanText(text).toLowerCase();
+    }
+
+    // Seed a WORLD EVENT: a Life Card owned by the world rather than a person. It takes a
+    // normal card slot (so MAX_ACTIVE_CARDS governs whether a character card can coexist)
+    // and rides the same injection/lifecycle machinery. Returns a seed-shaped object, or
+    // null when no events are configured -- the caller then falls through to characters.
+    function seedWorldEvent() {
+      const cg = ensureState();
+      const list = LC.worldEvents || [];
+      if (!list.length) return null;
+      // Only ONE world event at a time. All events share a single bucket key, so seeding
+      // while one is live would silently overwrite it -- return null instead and let the
+      // round-robin fall through to a character seat.
+      const live = cg.cards[CFG.EVENT_BUCKET_KEY];
+      if (live && cardHasContent(live) && lifeStatusIsActive(live.status)) return null;
+      // Prefer an event that is not still inside the dedup TTL, so the same one does not
+      // repeat back to back; if they are all recent, allow a repeat rather than stall.
+      const unused = list.filter(function(t) { return !isRecentSeed(worldEventSignature(t)); });
+      const text = cleanText(choose(unused.length ? unused : list));
+      if (!text) return null;
+
+      cg.cards[CFG.EVENT_BUCKET_KEY] = {
+        kind: "event",
+        owner: CFG.EVENT_OWNER_LABEL, // display only -- never used for selection
+        worldEvent: text,
+        target: "", pressure: "", momentum: "", event: "",
+        status: "active",
+        reminderCount: 0,
+        createdTurn: cg.turn,
+        eventLog: []
+      };
+
+      cg.recentSeeds.push({ sig: worldEventSignature(text), turn: cg.turn });
+      while (cg.recentSeeds.length > 20) cg.recentSeeds.shift();
+      cg.seedCount = (cg.seedCount || 0) + 1; // an event counts as a produced card
+      cg.lastSeedAttemptTurn = cg.turn;
+      cg.seedSource = "worldEvent";
+      cg.seedCandidates = [];
+      cg.selectedSeed = "WORLD EVENT";
+      cg.seedTargeting = "event";
+      cg.seedPressureSource = "event list";
+      cg.seedReason = "world event seeded (narrator chooses who is involved)";
+      cg.lastRoll = "WORLD EVENT: " + text;
+      return { id: "event-" + cg.turn, turnCreated: cg.turn, kind: "event", worldEvent: text };
+    }
+
+    // Story card for a live world event. Separate from the character-card renderer: no
+    // owner/target/pressure, and the trigger list carries no person's name.
+    function syncWorldEventCard(bucket) {
+      createOrPatchStoryCard(
+        CFG.EVENT_CARD_TITLE,
+        CFG.EVENT_CARD_TYPE,
+        CFG.EVENT_BUCKET_KEY + ",you",
+        "WORLD EVENT: " + cleanText(bucket.worldEvent) + "\nSTATUS: " + (cleanText(bucket.status) || "active"),
+        "A world event in play. The narrator decides who is pulled into it."
+      );
+    }
+
+    // Materialize a pressure card the moment a Life Card seed fires. The system
+    // writes only the abstract pressure (TARGET / PRESSURE / MOMENTUM); it never
+    // invents the specific behavior and never overwrites a narrator-authored EVENT.
     function bootstrapSeedCard(seed) {
       if (!seed) return;
       const bucket = ensureCardBucket(seed.actor);
       if (!bucket) return;
+
       bucket.target = seed.target;
       bucket.pressure = seed.pressure;
       bucket.momentum = seed.momentum;
@@ -11328,10 +11897,13 @@ function MCPV5Create_living_characters() {
       bucket.createdTurn = ensureState().turn; // for FRESH PRESSURE detection in the block
       appendEventLog(bucket, "[pressure] " + seed.pressure + " toward " + seed.target + " (" + seed.momentum + ")");
     }
+
+    // A Life card counts as "active" only in these statuses. dormant/resolved do not.
     function lifeStatusIsActive(status) {
       const list = CFG.ACTIVE_LIFE_STATUSES || ["active", "simmering", "surfaced"];
       return list.indexOf(cleanText(status).toLowerCase()) !== -1;
     }
+
     function countActiveLifeCards() {
       const cg = ensureState();
       const owners = Object.keys(cg.cards || {});
@@ -11342,22 +11914,43 @@ function MCPV5Create_living_characters() {
       }
       return n;
     }
+
+
+    // Dormancy ARCHIVES a thread: keep the card and HISTORY, but clear the active
+    // thread fields so the character fully releases this storyline and can be
+    // reseeded later with a brand-new TARGET / PRESSURE / MOMENTUM.
     function makeDormant(bucket) {
       if (!bucket) return;
+      const wasEvent = isEventBucket(bucket);
       bucket.target = "";
       bucket.pressure = "";
       bucket.momentum = "";
       bucket.event = "";
+      if (wasEvent) bucket.worldEvent = ""; // release the event text too
       bucket.status = "dormant";
       bucket.reminderCount = 0;
-      removeStoryCardByKeys(storyCardIdToken(bucket.owner));
+      // eventLog (HISTORY) is intentionally left untouched.
+
+      // Drop the Story Card; the bucket + HISTORY remain in state as the archive. A world
+      // event's card is keyed by EVENT_BUCKET_KEY, not by an owner token, so it needs its
+      // own lookup or the card would linger after the thread archived.
+      removeStoryCardByKeys(wasEvent ? CFG.EVENT_BUCKET_KEY : storyCardIdToken(bucket.owner));
     }
+
+    // Select an (owner -> target) pair from a GIVEN owner pool, honoring scene relevance.
+    // PURE: returns { actor, target, seedSource } or null and sets no state. The round-robin
+    // caller runs it once per pool (the preferred type first, then the other as fallback).
+    // This is the same scene/strict/hybrid/off selection the engine has always used, just
+    // parameterized by which owner pool it may draw from.
     function pickSeedPair(pool, mode, scene, p) {
       if (!pool || !pool.length) return null;
       if (mode === "strict" || mode === "hybrid") {
         const sceneNPCs = unique(npcRoster()).filter(function(n) { return n !== p && scene.indexOf(n) !== -1; });
         if (sceneNPCs.length) {
           const anchor = choose(sceneNPCs);                        // the present side
+          // A ruled anchor may only OWN when a configured target is currently legal
+          // (fail closed); owners considered for the target-present branch must be ALLOWED
+          // to target the anchor (unruled, or anchor is in their configured target set).
           const anchorCanOwn = pool.indexOf(anchor) !== -1 && hasLegalRuleTarget(anchor);
           const otherOwners = pool.filter(function(n) { return n !== anchor && canTarget(n, anchor); });
           const anchorAsOwner = anchorCanOwn && (LC.protagonistInvolvement === "always" || otherOwners.length === 0 || Math.random() < 0.5);
@@ -11368,6 +11961,7 @@ function MCPV5Create_living_characters() {
           if (actor && target) return { actor: actor, target: target, seedSource: "sceneActors" };
         }
         if (mode === "strict") return null; // strict: this pool has no scene-eligible pair
+        // hybrid: fall through to off-scene selection from this same pool
       }
       const seedable = pool.filter(hasLegalRuleTarget);
       if (!seedable.length) return null;
@@ -11376,13 +11970,17 @@ function MCPV5Create_living_characters() {
       if (!target) return null;
       return { actor: actor, target: target, seedSource: "fullRoster" };
     }
+
     function maybeCreateSeed(text) {
       const cg = ensureState();
       if (!CFG.AUTONOMY_ENABLED || LC.activityOff) { cg.lastRoll = "disabled (Social Activity Off)"; return null; }
+
+      // First-card turn gate: no Life Card until the story has had time to form.
       if (cg.turn < CFG.MIN_TURN_BEFORE_FIRST_SEED) {
         cg.lastRoll = "blocked: before first card turn";
         return null;
       }
+
       if (cg.pendingSeed && cg.turn - (cg.pendingSeed.turnCreated || 0) > CFG.AUTONOMY_MAX_PENDING_AGE) {
         cg.pendingSeed = null;
       }
@@ -11390,83 +11988,166 @@ function MCPV5Create_living_characters() {
         cg.lastRoll = "pending reused: " + cg.pendingSeed.actor + " -> " + cg.pendingSeed.target;
         return cg.pendingSeed;
       }
+      // HARD SLOT CAP: while the active slots are full, do NOT roll, seed, or replace.
+      // A new card is only considered after an active card finishes its full reminder
+      // cycle and archives (dormant), which frees a slot.
       if (countActiveLifeCards() >= LC.maxActive) {
         cg.lastRoll = "blocked: slot cap full (" + countActiveLifeCards() + "/" + LC.maxActive + ") -- waiting for a card to archive";
         return null;
       }
+      // Pacing: the FIRST card ever (seedCount 0) ignores the interval and fires as
+      // soon as MIN_TURN allows. After that, wait LIFE_CARD_INTERVAL turns since the
+      // last SUCCESSFUL card, then retry every turn until one is created (a failed
+      // attempt does not waste the interval). lastSeedAttemptTurn is stamped on success.
       if ((cg.seedCount || 0) > 0 && cg.turn - (cg.lastSeedAttemptTurn || 0) < LC.activityTurns) {
         cg.lastRoll = "waiting (next attempt ~turn " + ((cg.lastSeedAttemptTurn || 0) + LC.activityTurns) + ")";
         return null;
       }
+
+      // Scene-aware OWNER selection. The owner holds the pressure, so in strict mode it
+      // must be an NPC currently in scene; hybrid prefers in-scene owners but falls back
+      // to the full roster; off uses the full roster. (Protagonist is never an owner, so
+      // the protagonist being always-present does not make every NPC eligible.)
+      // Scene eligibility (strict/hybrid): a card is eligible if AT LEAST ONE side --
+      // owner OR target -- is a NON-protagonist NPC in scene. The other side may be
+      // off-scene (owner expresses pressure toward an absent target; or others react to
+      // a present target whose owner is absent). The always-present protagonist never
+      // makes a card eligible by itself:
+      //   NPC -> NPC:          owner OR target in scene
+      //   NPC -> Protagonist:  owner must be in scene
+      //   Protagonist -> NPC:  N/A (protagonist is never an owner)
       const mode = LC.sceneRelevanceMode || "off";
       const scene = cg.sceneActors || [];
       const p = playerName();
       const poolAll = actorPool();
-      const phase = (cg.seedPhase === "random") ? "random" : "relationship";
+
+      // ROUND-ROBIN with FULL FALLBACK. Each produced card advances one seat in
+      // CFG.SEED_CYCLE (relationship -> event -> random -> repeat), so every kind gets a
+      // fair turn. CRITICALLY: a seat that cannot produce this turn is SKIPPED and the next
+      // seat is tried, wrapping all the way around the cycle.
+      //
+      // This is the fix for the queue stalling: the index used to advance only on SUCCESS,
+      // so a blocked character seat (everyone already holding a card, on cooldown, or the
+      // pair being a recent duplicate) froze the rotation on that seat and events simply
+      // stopped firing. Worse, an EVENTS-ONLY setup (no characters configured) could never
+      // advance off seat 0 and never reached the event seat at all. Now every seat acts as
+      // the fallback for every other seat, so whatever CAN fire, does.
+      const cycle = CFG.SEED_CYCLE;
+      let cycleIdx = (typeof cg.seedCycleIndex === "number" ? cg.seedCycleIndex : 0);
+      cycleIdx = ((cycleIdx % cycle.length) + cycle.length) % cycle.length;
       const ruledPool = poolAll.filter(function(n) { return !!ownerRules(n); });
       const randomPool = poolAll.filter(function(n) { return !ownerRules(n); });
-      const firstPool = (phase === "relationship") ? ruledPool : randomPool;
-      const secondPool = (phase === "relationship") ? randomPool : ruledPool;
-      let pick = pickSeedPair(firstPool, mode, scene, p);
-      let fellBack = false;
-      if (!pick) { pick = pickSeedPair(secondPool, mode, scene, p); fellBack = !!pick; }
-      if (!pick) {
-        cg.seedSource = "skipped";
+      const tried = [];
+      const dupSeats = []; // seats whose pick was blocked by the dedup TTL (kept for debug)
+
+      for (let step = 0; step < cycle.length; step++) {
+        const idx = (cycleIdx + step) % cycle.length;
+        const seat = cycle[idx];
+        cg.seedPhase = seat; // debug display
+        const seatLabel = "seat=" + seat +
+          (step === 0 ? " (preferred)" : " (fallback after " + tried.join(",") + ")");
+        tried.push(seat);
+
+        // ---- EVENT seat ------------------------------------------------------
+        if (seat === "event") {
+          const evSeed = seedWorldEvent();
+          if (evSeed) {
+            cg.seedCycleIndex = (idx + 1) % cycle.length;
+            cg.seedRoundRobin = seatLabel;
+            return evSeed;
+          }
+          continue; // no events configured, or one already live -> try the next seat
+        }
+
+        // ---- CHARACTER seats (relationship / random) -------------------------
+        const pool = (seat === "relationship") ? ruledPool : randomPool;
+        const pick = pickSeedPair(pool, mode, scene, p);
+        if (!pick) continue;
+
+        const actor = pick.actor, target = pick.target, seedSource = pick.seedSource;
+        // Pressure resolution: exact Owner > Target rule list, else the global pool.
+        const rule = ruleFor(actor, target);
+        const rulePressures = (rule && rule.pressures && rule.pressures.length) ? rule.pressures : null;
+        const pressure = choose(rulePressures || LC.pressures) || "tension";
+        const intensity = weightedChoice([["small", 65], ["medium", 28], ["major", 7]]);
+
+        const seed = {
+          id: "seed-" + cg.turn + "-" + randomInt(100000),
+          turnCreated: cg.turn,
+          actor: actor,
+          target: target,
+          category: pressure,
+          intensity: intensity,
+          pressure: pressure,
+          momentum: momentumForIntensity(intensity),
+          reason: cardReason(actor, target, pressure)
+        };
+        // A duplicate signature must not stall the queue either -- try the next seat.
+        if (isRecentSeed(seedSignature(seed))) {
+          dupSeats.push(seat + ":" + actor + "->" + target);
+          cg.lastRoll = "attempt: duplicate, skipped (signature expires after " + CFG.SEED_DEDUP_TTL_TURNS + " turns)";
+          continue;
+        }
+
+        const ownerIn = actor !== p && scene.indexOf(actor) !== -1;
+        const tgtIn = target !== p && scene.indexOf(target) !== -1;
+        cg.seedSource = seedSource;
         cg.seedCandidates = poolAll.slice(0, 12);
-        cg.selectedSeed = "(none)";
-        cg.seedRoundRobin = "phase=" + phase + " -> no pair from either pool";
-        cg.seedReason = poolAll.length
-          ? (mode === "strict"
-              ? "strict: no scene-eligible pair from either round-robin pool (phase " + phase + ")"
-              : "no eligible owner/target pair, both round-robin pools (phase " + phase + ")")
-          : "no eligible owners";
-        cg.lastRoll = "attempt: no eligible pair (phase " + phase + ")";
-        return null;
+        cg.selectedSeed = actor + " -> " + target;
+        cg.seedRoundRobin = seatLabel;
+        cg.seedReason = (seedSource === "sceneActors")
+          ? (ownerIn && tgtIn ? "owner & target in scene" : ownerIn ? "owner in scene" : "target in scene")
+          : "off-scene seed allowed (mode=" + mode + ")";
+        cg.seedTargeting = ownerRules(actor) ? "rule" : "random";
+        cg.seedPressureSource = rulePressures ? "rule" : "global";
+        cg.seedRule = rule
+          ? "rule: " + actor + " > " + target + " | pressures: " + (rulePressures ? rulePressures.join(", ") : "global pool")
+          : "";
+        if (cg.seedRule) cg.seedReason += " | " + cg.seedRule;
+
+        cg.pendingSeed = seed;
+        cg.lastSeedAttemptTurn = cg.turn;            // start the next interval only on SUCCESS
+        cg.seedCycleIndex = (idx + 1) % cycle.length; // advance past the seat that produced
+        cg.lastRoll = "LIFE CARD " + actor + " -> " + target + " [" + pressure + "/" + intensity + "]";
+        rememberSeed(seed);
+        bootstrapSeedCard(seed);
+        return seed;
       }
-      const actor = pick.actor, target = pick.target, seedSource = pick.seedSource;
-      cg.seedSource = seedSource;
+
+      // Nothing in the entire cycle could produce a card this turn.
+      cg.seedSource = "skipped";
       cg.seedCandidates = poolAll.slice(0, 12);
-      cg.selectedSeed = actor + " -> " + target;
-      cg.seedRoundRobin = "phase=" + phase +
-        (fellBack ? " -> fell back to " + (phase === "relationship" ? "random" : "relationship") : " (preferred)");
-      const ownerIn = actor !== p && scene.indexOf(actor) !== -1;
-      const tgtIn = target !== p && scene.indexOf(target) !== -1;
-      cg.seedReason = (seedSource === "sceneActors")
-        ? (ownerIn && tgtIn ? "owner & target in scene" : ownerIn ? "owner in scene" : "target in scene")
-        : "off-scene seed allowed (mode=" + mode + ")";
-      const rule = ruleFor(actor, target);
-      const rulePressures = (rule && rule.pressures && rule.pressures.length) ? rule.pressures : null;
-      const pressure = choose(rulePressures || LC.pressures) || "tension";
-      cg.seedTargeting = ownerRules(actor) ? "rule" : "random";
-      cg.seedPressureSource = rulePressures ? "rule" : "global";
-      cg.seedRule = rule
-        ? "rule: " + actor + " > " + target + " | pressures: " + (rulePressures ? rulePressures.join(", ") : "global pool")
-        : "";
-      if (cg.seedRule) cg.seedReason += " | " + cg.seedRule;
-      const intensity = weightedChoice([["small", 65], ["medium", 28], ["major", 7]]);
-      let seed = {
-        id: "seed-" + cg.turn + "-" + randomInt(100000),
-        turnCreated: cg.turn,
-        actor: actor,
-        target: target,
-        category: pressure,
-        intensity: intensity,
-        pressure: pressure,
-        momentum: momentumForIntensity(intensity),
-        reason: cardReason(actor, target, pressure)
-      };
-      if (isRecentSeed(seedSignature(seed))) { cg.lastRoll = "attempt: duplicate, skipped (signature expires after " + CFG.SEED_DEDUP_TTL_TURNS + " turns)"; return null; }
-      cg.pendingSeed = seed;
-      cg.lastSeedAttemptTurn = cg.turn; // start the next interval only on SUCCESS
-      cg.seedPhase = (phase === "relationship") ? "random" : "relationship";
-      cg.lastRoll = "LIFE CARD " + actor + " -> " + target + " [" + pressure + "/" + intensity + "]";
-      rememberSeed(seed);
-      bootstrapSeedCard(seed);
-      return seed;
+      cg.selectedSeed = "(none)";
+      cg.seedRoundRobin = "no seat produced (tried " + tried.join(",") + ")";
+      cg.seedReason = poolAll.length
+        ? (mode === "strict"
+            ? "strict: no scene-eligible pair, and no event available"
+            : "no eligible owner/target pair, and no event available")
+        : ((LC.worldEvents && LC.worldEvents.length)
+            ? "no eligible owners; an event is already live or none available"
+            : "no eligible owners");
+      // Keep the duplicate reason visible -- otherwise a dedup block would be masked by the
+      // generic "no seat produced" message and the debug trail would lose why nothing fired.
+      cg.lastRoll = dupSeats.length
+        ? ("attempt: duplicate, skipped (" + dupSeats.join("; ") + "; signature expires after " +
+           CFG.SEED_DEDUP_TTL_TURNS + " turns)")
+        : ("attempt: no card from any seat (" + tried.join(",") + ")");
+      return null;
     }
+
     function buildContextDirective(text) {
       const seed = maybeCreateSeed(text);
       if (!seed) return "";
+      // A world event names nobody -- the narrator picks who gets pulled in.
+      if (seed.kind === "event") {
+        return "\n\n<LC_PRIVATE>\n" +
+          "### Stop the story. Use this now.\n" +
+          "A world event is happening RIGHT NOW: " + seed.worldEvent + "\n" +
+          "Bring it into the scene immediately and make it the centre of what happens next. YOU decide which characters are pulled into it. Do not mention this note.\n" +
+          "</LC_PRIVATE>";
+      }
+      // Compact: a new pressure formed. Let it color behavior; the narrator MAY record
+      // a concrete development with a hidden memory block (never auto-control the player).
       return "\n\n<LC_PRIVATE>\n" +
         "### Stop the story. Use this card now.\n" +
         "New social pressure: " + seed.actor + " feels " + (seed.pressure || seed.category) +
@@ -11480,6 +12161,8 @@ function MCPV5Create_living_characters() {
         "</LC_MEMORY>\n" +
         "</LC_PRIVATE>";
     }
+
+    // Most recent concrete development for a card, kept to one compact line.
     function latestThreadLine(b) {
       let latest = cleanText(b.event);
       if (!latest && Array.isArray(b.eventLog) && b.eventLog.length) {
@@ -11488,7 +12171,13 @@ function MCPV5Create_living_characters() {
       if (latest.length > 160) latest = latest.slice(0, 157) + "...";
       return latest;
     }
+
+    // A thread is scene-relevant when a NON-protagonist participant is in scene.
+    // (The protagonist is always "present", so target-is-protagonist alone does not
+    // count; the NPC owner must be present.)
     function isSceneRelevant(b, scene) {
+      // A world event is not a person -- it is always in play, whatever the scene mode.
+      if (isEventBucket(b)) return true;
       const p = playerName();
       const owner = cleanName(b.owner);
       const tgt = cleanName(b.target);
@@ -11496,11 +12185,16 @@ function MCPV5Create_living_characters() {
       const targetIn = tgt && tgt !== p && scene.indexOf(tgt) !== -1;
       return !!(ownerIn || targetIn);
     }
+
+    // Always-on block. Injects compact full details of the selected active Life Cards
+    // every turn. SCENE_RELEVANCE_MODE controls selection: strict = scene-relevant only,
+    // off = any active, hybrid = scene-relevant first then fill.
     function buildActiveThreadsBlock() {
       const cg = ensureState();
       const scene = cg.sceneActors || [];
       const mode = LC.sceneRelevanceMode || "off";
       const owners = Object.keys(cg.cards || {});
+
       const active = [];
       for (let i = 0; i < owners.length; i++) {
         const b = cg.cards[owners[i]];
@@ -11508,10 +12202,13 @@ function MCPV5Create_living_characters() {
         active.push({ owner: owners[i], bucket: b });
       }
       if (!active.length) { cg.lastCandidateTrace = []; cg.lastSelectedTrace = []; cg.lastActiveSelected = 0; return ""; }
+
+      // Debug trace: every active card + whether it is scene-relevant this turn.
       cg.lastCandidateTrace = active.map(function(c) {
         return c.owner + "->" + (cleanText(c.bucket.target) || "?") +
           (isSceneRelevant(c.bucket, scene) ? " [in-scene]" : " [off-scene]");
       });
+
       let selected;
       if (mode === "off") {
         selected = active.slice(0, LC.maxActive);
@@ -11527,8 +12224,15 @@ function MCPV5Create_living_characters() {
         return c.owner + "->" + (cleanText(c.bucket.target) || "?");
       });
       if (!selected.length) return "";
+
+      // Render each card as a distinct multi-line block (more salient than one line).
       const renderEntry = function(c) {
         const b = c.bucket;
+        // World event: no owner/target/pressure -- just the event and who-decides framing.
+        if (isEventBucket(b)) {
+          return "WORLD EVENT (in play now -- YOU decide which characters are pulled into it):\n" +
+            cleanText(b.worldEvent);
+        }
         let e = "OWNER: " + c.owner +
           "\nTARGET: " + (cleanText(b.target) || "someone") +
           "\nPRESSURE: " + (cleanText(b.pressure) || "unspoken pressure") +
@@ -11538,6 +12242,8 @@ function MCPV5Create_living_characters() {
         if (latest) e += "\nLATEST: " + latest;
         return e;
       };
+
+      // Split: a card is FRESH for FRESH_THREAD_WINDOW turns after it fires.
       const fresh = [], ongoing = [];
       for (let i = 0; i < selected.length; i++) {
         const created = (typeof selected[i].bucket.createdTurn === "number") ? selected[i].bucket.createdTurn : 0;
@@ -11545,10 +12251,22 @@ function MCPV5Create_living_characters() {
         else ongoing.push(selected[i]);
       }
       cg.lastFreshThreads = fresh.map(function(c) { return c.owner; });
+
+      // Write-back is a periodic CHECKPOINT, shown only on reminder/surface turns (the
+      // same cadence as advanceThreadDormancy) -- NOT every turn. Framed as a look-back so
+      // a development from a recent turn can still be recorded here. Conditional only:
+      // never required, no no-op blocks (the owner && event gate still drops empty ones).
       const checkpointTurn = isCheckpointTurn();
       if (checkpointTurn) cg.lastCheckpointTurn = cg.turn; // stamp the checkpoint's OWN counter
+
+      // Forceful, active framing (Dynamic Large responds better when the card reads as a
+      // live scene driver, not background info). Not subtle.
       let body = "### Stop the story. Use these cards now.\n" +
         "Every active life thread below is in play in the CURRENT scene. Your next response must use them now -- make them visibly drive the characters' behavior, choices, dialogue, and reactions. Do not state the labels.\n";
+
+      // PRIMARY: the Life Card details lead. This is story-driving context the narrator
+      // should USE in the prose. (Front-loading the write-back task made the model
+      // deprioritize the card, so the card and its nudge always come first now.)
       if (fresh.length) {
         body += "\nFRESH PRESSURE (new this turn -- you MUST act on this in THIS scene now):\n" +
           fresh.map(renderEntry).join("\n\n") + "\n";
@@ -11556,9 +12274,16 @@ function MCPV5Create_living_characters() {
       if (ongoing.length) {
         body += "\nONGOING THREADS:\n" + ongoing.map(renderEntry).join("\n\n") + "\n";
       }
+
+      // PRIMARY: single forceful story-driver nudge. Not subtle.
       body += (mode === "strict")
         ? "\n### Use these now. Each active life thread is REQUIRED to create a visible consequence in this scene -- dialogue, gossip, tension, attraction, avoidance, conflict, reactions, choices, or a relationship shift. Do not state the labels.\n"
         : "\n### Use these now. These pressures are live and drive the current story even when the characters are off-screen -- they are REQUIRED to surface as visible consequences: dialogue, gossip, shifting moods, attitudes, alliances, tension, attraction, avoidance, conflict, reactions, choices, relationship shifts. Do not state the labels.\n";
+
+      // SECONDARY: trailing write-back, only on reminder/checkpoint turns, and visibly
+      // SEPARATED from the story context above (a divider + "does not change the story")
+      // so it reads as optional bookkeeping, never as competing with using the card.
+      // Conditional only; the owner && event gate still drops empty/no-occurrence blocks.
       if (checkpointTurn) {
         const triggerList = selected.map(function(c) {
           const b = c.bucket;
@@ -11582,11 +12307,18 @@ function MCPV5Create_living_characters() {
           "</LC_MEMORY>\n" +
           "Cards that may have developed: " + triggerList + ".\n";
       }
+
       return "\n\n<LC_PRIVATE>\n" +
         (LC.forceActiveCardTrigger && CFG.ACTIVE_SHARED_TRIGGER ? CFG.ACTIVE_SHARED_TRIGGER + "\n" : "") +
         body +
         "</LC_PRIVATE>";
     }
+
+    // True when THIS turn is a write-back CHECKPOINT turn -- on the CHECKPOINT_EVERY
+    // cadence (its OWN counter cg.lastCheckpointTurn, independent of dormancy), and only
+    // when at least one active (non-dormant/resolved) card exists. READ-ONLY: it does NOT
+    // advance the counter, age cards, or change dormancy. The caller stamps
+    // cg.lastCheckpointTurn when it actually shows the checkpoint. Does not affect lifespan.
     function isCheckpointTurn() {
       const cg = ensureState();
       if ((cg.turn - (cg.lastCheckpointTurn || 0)) < (LC.checkpointEvery || CFG.CHECKPOINT_EVERY)) return false;
@@ -11594,15 +12326,21 @@ function MCPV5Create_living_characters() {
       for (let i = 0; i < owners.length; i++) {
         const b = cg.cards[owners[i]];
         if (!cardHasContent(b)) continue;
+        if (isEventBucket(b)) continue; // events take no narrator write-back
         const st = cleanText(b.status).toLowerCase();
         if (st === "resolved" || st === "dormant") continue;
         return true;
       }
       return false;
     }
+
+    // Dormancy progression on the THREAD_REMINDER_EVERY cadence (its own counter,
+    // cg.lastThreadReminderTurn). Counts appearances and archives threads that go stale.
+    // INDEPENDENT of the write-back checkpoint cadence. Injects NO context text.
     function advanceThreadDormancy() {
       const cg = ensureState();
       if (cg.turn - (cg.lastThreadReminderTurn || 0) < (LC.threadReminderEvery || CFG.THREAD_REMINDER_EVERY)) return;
+
       const owners = Object.keys(cg.cards || {});
       const candidates = [];
       for (let i = 0; i < owners.length; i++) {
@@ -11613,6 +12351,7 @@ function MCPV5Create_living_characters() {
         candidates.push(b);
       }
       if (!candidates.length) return;
+
       cg.lastThreadReminderTurn = cg.turn;
       const show = candidates.slice(0, CFG.THREAD_REMINDER_MAX);
       for (let i = 0; i < show.length; i++) {
@@ -11621,29 +12360,40 @@ function MCPV5Create_living_characters() {
         if (b.reminderCount >= CFG.THREAD_REMINDERS_BEFORE_DORMANT) makeDormant(b);
       }
     }
+
     function seedAppearsInOutput(seed, outputText) {
       if (!seed || !outputText) return false;
       if (!containsWholeWord(outputText, seed.actor)) return false;
       if (seed.target === playerName()) return true;
       return containsWholeWord(outputText, seed.target);
     }
+
     function maybeAutoCompleteOnscreenSeed(outputText) {
       if (!CFG.AUTO_COMPLETE_ONSCREEN_SEEDS) return false;
+
       const cg = ensureState();
       const seed = cg.pendingSeed;
       if (!seed) return false;
       if (!seedAppearsInOutput(seed, outputText)) return false;
+
       const bucket = ensureCardBucket(seed.actor);
       if (!bucket) return false;
+
+      // The narrator showed actor + target but wrote no memory. Keep the abstract
+      // pressure card and just mark it active. Do NOT invent canned event text;
+      // a story-specific EVENT only ever comes from a narrator memory block.
       bucket.target = seed.target;
       if (!cleanText(bucket.pressure)) bucket.pressure = seed.pressure;
       if (!cleanText(bucket.momentum)) bucket.momentum = seed.momentum;
       bucket.status = "active";
+
       appendEventLog(bucket, "[active] " + seed.pressure + " toward " + seed.target + " is in play.");
+
       cg.pendingSeed = null;
       cg.lastRoll = "AUTO active: " + seed.actor + " / " + seed.pressure + " -> " + seed.target;
       return true;
     }
+
     function parseMemoryBlock(block) {
       const lines = String(block || "").replace(/\r/g, "").split("\n");
       const data = {};
@@ -11665,15 +12415,19 @@ function MCPV5Create_living_characters() {
         }
       }
       data.owner = cleanName(data.owner);
+      // OCCURRENCE is the preferred label; EVENT remains a backwards-compatible alias.
       data.event = cleanText(data.occurrence || data.event);
       data.pressure = cleanText(data.pressure);
       data.target = cleanName(data.target);
       data.momentum = cleanText(data.momentum).toLowerCase();
       data.status = cleanText(data.status || "active").toLowerCase();
       data.log = cleanText(data.log || data.event);
+      // Optional narrator-authored first-person interior line. Display-only; the engine
+      // never reads it for targeting, pressure, momentum, status, or any logic.
       data.owner_thought = cleanText(data.owner_thought);
       return data;
     }
+
     function extractBlocks(text, tag) {
       const blocks = [];
       const open = "<" + tag + ">";
@@ -11688,8 +12442,11 @@ function MCPV5Create_living_characters() {
       }
       return blocks;
     }
+
     function stripBlocks(text) {
       let out = String(text || "");
+      // LC_* are current; CG_* are legacy and still stripped so an in-flight story
+      // that emits an old tag never leaks it into the visible output.
       const tags = ["LC_PRIVATE", "LC_SEED", "LC_MEMORY", "LC_CARDS", "CG_PRIVATE", "CG_SEED", "CG_MEMORY", "CG_CARDS"];
       for (let t = 0; t < tags.length; t++) {
         const open = "<" + tags[t] + ">";
@@ -11709,6 +12466,7 @@ function MCPV5Create_living_characters() {
       }
       return cleanText(out);
     }
+
     function stripSelectedBlocks(text, tags) {
       let out = String(text || "");
       for (let t = 0; t < tags.length; t++) {
@@ -11729,14 +12487,31 @@ function MCPV5Create_living_characters() {
       }
       return out;
     }
+
+    // Output-safety fallback. After the script removes hidden/private/thought blocks, the
+    // visible text can end up empty (e.g. an opening <LC_PRIVATE> with no closing tag strips
+    // to end-of-string). AI Dungeon treats an empty OR whitespace-only return (including a
+    // plain space) as "The AI service returned an empty response". This guarantees a
+    // non-empty return WITHOUT ever exposing private tags: it strips any remaining blocks,
+    // and if nothing visible is left, returns a zero-width space the player never sees.
+    // For normal output (real visible text present) it returns that text unchanged.
     function safeVisibleOutput(value) {
       const out = cleanText(stripBlocks(value));
       return out || CFG.EMPTY_OUTPUT_FALLBACK;
     }
+
+    // True when `s` has no VISIBLE content: null/undefined, or only whitespace and/or
+    // zero-width characters. NOTE: \u200B (zero-width space) is NOT matched by \s, so it is
+    // listed explicitly here -- otherwise a "fallback" return would look non-empty and a
+    // genuinely empty turn would slip through unlogged.
     function isBlank(s) {
       if (s == null) return true;
       return String(s).replace(/[\s\u200B\u200C\u200D\uFEFF]/g, "").length === 0;
     }
+
+    // Records + logs WHICH return branch produced the safe Unicode fallback, so an empty
+    // response can be traced to its source. Always emits a console line (visible in the AID
+    // script console) and stashes the reason in state for the debug card. Never throws.
     function debugFallback(branch, detail) {
       const msg = "LivingCharacters EMPTY-FALLBACK [" + branch + "]" + (detail ? " :: " + detail : "");
       try {
@@ -11748,9 +12523,20 @@ function MCPV5Create_living_characters() {
         cg.lastFallback = msg + " (turn " + (cg.turn || 0) + ")";
       } catch (e) {}
     }
+
+    // FINAL OUTPUT BOUNDARY for every hook return. Guarantees a non-empty, non-whitespace,
+    // non-null string so AI Dungeon never reports an empty response (output) or "Unable to
+    // run scenario scripts" (input). This is the single authoritative place the Unicode
+    // fallback is applied -- helpers may return "" freely; this reconciles it.
+    //   - output: must carry NO private tags AND keep its LEADING separator (the space/newline
+    //     that joins this continuation to the prior story); blank -> fallback.
+    //   - input/context: blank -> restore the untouched original if it has content, else fallback.
     function finalizeResult(hook, result, original) {
       const out = (typeof result === "string") ? result : (result == null ? "" : String(result));
       if (hook === "output") {
+        // Remove private tags WITHOUT trimming (stripSelectedBlocks does not call cleanText),
+        // capture the model's leading separator, then tidy the BODY and re-attach one
+        // normalized separator. This stops the narrator's text jamming onto the previous text.
         const stripped = stripSelectedBlocks(out, ["LC_PRIVATE", "LC_SEED", "LC_MEMORY", "LC_CARDS", "CG_PRIVATE", "CG_SEED", "CG_MEMORY", "CG_CARDS"]);
         const visible = leadSeparator(leadingWhitespace(stripped)) + cleanText(stripped);
         if (!isBlank(visible)) return visible;
@@ -11758,6 +12544,7 @@ function MCPV5Create_living_characters() {
         return CFG.EMPTY_OUTPUT_FALLBACK;
       }
       if (!isBlank(out)) return out;
+      // Blank input/context: prefer the original text (don't destroy a real turn), else fallback.
       if (!isBlank(original)) {
         debugFallback("finalize:" + hook + ":restore-original", "blank result; restored original text");
         return String(original);
@@ -11765,7 +12552,48 @@ function MCPV5Create_living_characters() {
       debugFallback("finalize:" + hook + ":unicode", "blank result and blank original");
       return CFG.EMPTY_OUTPUT_FALLBACK;
     }
-    const THOUGHT_KEYS = ["thoughts_enabled", "thought_characters", "thought_interval", "thought_formation_chance", "thought_scene_mode"];
+
+
+    // THOUGHT CARD SYSTEM
+    // --------------------------------------------------------------------------
+    // Part of LIVING CHARACTERS, a LivingNarratives project.
+    // (https://github.com/LivingNarratives/LivingCharacters)
+    //
+    // This module belongs to Living Characters. Thought Cards are a feature of
+    // Living Characters, kept deliberately separate from the Life Card engine.
+    //
+    // WHAT THOUGHT CARDS ARE:
+    //   Player-facing thought journals. One numbered, human-readable log per
+    //   character (titled "Name - Thoughts"; a temporary 💭 marks recent updates) to read
+    //   to follow a character's emotional progression over many turns.
+    //
+    // WHAT THOUGHT CARDS ARE NOT:
+    //   - NOT memory. NOT a brain. NOT Inner Self.
+    //   - They do NOT enter the story context (the Thought Card uses a non-matching
+    //     key, so the AI Dungeon front-end never injects it).
+    //   - They are NOT read by the AI narrator.
+    //   - They do NOT affect character behavior, Life Card creation, targeting,
+    //     pressure, momentum, dormancy, selection, or any story logic.
+    //
+    // WHAT THIS MODULE DOES (the entire job):
+    //   1. ASK   - inject ONE temporary first-person parenthetical request into
+    //              context (the only thing this system ever puts in context).
+    //   2. CAPTURE- read that leading parenthetical back from the model's output
+    //              and strip it from the visible story.
+    //   3. STORE - append it (numbered) to the character's Thought Card for the
+    //              player to read later. Nothing reads it back.
+    //
+    // The PARENTHETICAL REQUEST is the only temporary instruction injected into
+    // context. The stored Thought Card itself is never injected (non-matching key).
+    // No XML, no LC_MEMORY, no write-back blocks, no detectors. Runs independently
+    // of Life Cards (a character can have thoughts with no active Life Card).
+    // ==========================================================================
+    const THOUGHT_KEYS = ["thoughts_enabled", "thought_characters", "thought_interval", "thought_formation_chance", "thought_scene_mode", "thought_order"];
+
+    // THOUGHT CARDS CONFIG
+    // The editable Story Card that controls the separate Thought Card system. It is
+    // distinct from the LIVING CHARACTERS CONFIG (Life Cards) card on purpose, so the
+    // two systems never share settings. Defaults below are conservative and opt-in.
     function defaultThoughtConfigEntry() {
       return [
         "THOUGHT CARDS (separate from Life Cards)",
@@ -11787,9 +12615,14 @@ function MCPV5Create_living_characters() {
         "50",
         "",
         "THOUGHT_SCENE_MODE:",
-        "scene"
+        "scene",
+        "",
+        "THOUGHT_ORDER:",
+        "ascending",
+        "( ascending = 1,2,3,4  |  descending = 4,3,2,1 )"
       ].join("\n");
     }
+
     function ensureThoughtConfigCard() {
       const existing = findStoryCardByKeys(CFG.THOUGHT_CONFIG_CARD_KEY) || findStoryCardByTitle(CFG.THOUGHT_CONFIG_CARD_TITLE);
       if (existing) return existing;
@@ -11801,6 +12634,7 @@ function MCPV5Create_living_characters() {
         "Thought Cards are a player-facing journal. They never enter the story context."
       );
     }
+
     function buildThoughtConfig() {
       ensureThoughtConfigCard();
       const card = findStoryCardByKeys(CFG.THOUGHT_CONFIG_CARD_KEY) || findStoryCardByTitle(CFG.THOUGHT_CONFIG_CARD_TITLE);
@@ -11810,10 +12644,20 @@ function MCPV5Create_living_characters() {
       const interval = Math.max(1, toIntOr(configFirst(sections, "thought_interval", CFG.THOUGHT_INTERVAL_DEFAULT), CFG.THOUGHT_INTERVAL_DEFAULT));
       const chance = Math.max(0, Math.min(100, toIntOr(configFirst(sections, "thought_formation_chance", CFG.THOUGHT_CHANCE_DEFAULT), CFG.THOUGHT_CHANCE_DEFAULT)));
       const maxThoughts = CFG.MAX_THOUGHTS_DEFAULT; // hardcoded 10; NOT a user config option
+      // THOUGHT_SCENE_MODE: scene (default) | recent | roster. Validated; bad values ->
+      // default "scene". Thought scene relevance is SEPARATE from Life Card scene relevance:
+      // it only decides which character may get a journal entry, and must not affect Life
+      // Card targeting, pressure selection, momentum, or story logic.
       let sceneMode = String(configFirst(sections, "thought_scene_mode", CFG.THOUGHT_SCENE_MODE_DEFAULT)).toLowerCase().replace(/\s+/g, "");
       if (["scene", "recent", "roster"].indexOf(sceneMode) === -1) sceneMode = CFG.THOUGHT_SCENE_MODE_DEFAULT;
-      return { enabled: enabled, characters: characters, interval: interval, chance: chance, maxThoughts: maxThoughts, sceneMode: sceneMode };
+      // THOUGHT_ORDER: ascending (default) | descending. Display only. "desc"/"newest"/"new"
+      // are accepted as friendly aliases for descending; anything else -> ascending.
+      let order = String(configFirst(sections, "thought_order", CFG.THOUGHT_ORDER_DEFAULT)).toLowerCase().replace(/\s+/g, "");
+      order = (["descending", "desc", "newest", "new", "reverse"].indexOf(order) !== -1) ? "descending" : "ascending";
+      return { enabled: enabled, characters: characters, interval: interval, chance: chance, maxThoughts: maxThoughts, sceneMode: sceneMode, order: order };
     }
+
+    // Separate state slice -- never touches chaosGoblinV2 (Life Card state).
     function ensureThoughtState() {
       if (!globalThis.state || typeof state !== "object") globalThis.state = {};
       if (!state.livingThoughts || typeof state.livingThoughts !== "object") {
@@ -11825,6 +12669,11 @@ function MCPV5Create_living_characters() {
       if (typeof ts.lastThoughtTurn !== "number") ts.lastThoughtTurn = 0;
       if (typeof ts.markedChar !== "string") ts.markedChar = "";   // 💭 "recently updated" marker
       if (typeof ts.markedTurn !== "number") ts.markedTurn = 0;
+      // Migrate legacy storage. Older saves stored byChar[name] as an array of plain
+      // strings whose displayed number came from the array position -- so removing an old
+      // thought renumbered the survivors. Convert each entry to a { n, text } object with a
+      // PERMANENT number, and seed ts.seq[name] with the highest number seen so future
+      // thoughts keep counting up (never reused, never reset).
       const names = Object.keys(ts.byChar);
       for (let i = 0; i < names.length; i++) {
         const nm = names[i];
@@ -11844,12 +12693,28 @@ function MCPV5Create_living_characters() {
       }
       return ts;
     }
+
+    // Stable, non-matching key for lookup/recreation (UNCHANGED: lc-thoughts:name).
     function thoughtCardToken(name) {
       return CFG.THOUGHT_CARD_KEY_PREFIX + keyName(name);
     }
+
+    // Character-first display title: "Name - Thoughts", with a TEMPORARY "💭 " marker
+    // prepended while the card is recently updated. The KEY (above) identifies the card,
+    // so adding/removing the marker just safely re-titles the same existing card.
     function thoughtCardTitle(name, marked) {
       return (marked ? CFG.THOUGHT_MARKER + " " : "") + name + CFG.THOUGHT_CARD_TITLE_SUFFIX;
     }
+
+    // Thought Card: "Name - Thoughts" (temporary "💭 " prepended while recently updated)
+    //   Purpose:     a numbered, player-readable thought journal for one character.
+    //   Not purpose: not memory, not a brain, not context, not narrator guidance,
+    //                not a logic source.
+    // Render a character's Thought Card from the stored list. The keys are a
+    // non-matching token (CFG.THOUGHT_CARD_KEY_PREFIX + name, no plain-name trigger),
+    // so the AI Dungeon front-end never matches it against story text and the card is
+    // NEVER injected into context. Type is "Custom" purely for player-side organization.
+    // One stored thought renders as "N. text" where N is the PERMANENT number.
     function thoughtLine(item) {
       return item.n + ". " + item.text;
     }
@@ -11858,6 +12723,11 @@ function MCPV5Create_living_characters() {
       for (let i = 0; i < items.length; i++) lines.push(thoughtLine(items[i]));
       return lines.join("\n");
     }
+
+    // Greedily take the NEWEST items whose rendered lines fit within `max` characters
+    // (joined by newlines). Returns { kept, dropped }, both in ascending (oldest -> newest)
+    // order. At least one item is always kept, so the newest thought is never lost even if
+    // it alone exceeds `max`.
     function fitNewest(items, max) {
       const kept = [];
       let len = 0;
@@ -11871,19 +12741,47 @@ function MCPV5Create_living_characters() {
       const dropped = items.slice(0, items.length - kept.length);
       return { kept: kept, dropped: dropped };
     }
+
+    // Render a character's Thought Card from the stored list, split by CHARACTER COUNT:
+    //   - Entry  = the NEWEST thoughts, up to ~THOUGHT_ENTRY_MAX_CHARS.
+    //   - Notes  = the OLDER overflow from Entry, up to ~THOUGHT_NOTES_MAX_CHARS.
+    //   - Thoughts too old to fit even in Notes are dropped (oldest-first) from storage.
+    // New thoughts always land in Entry; older ones flow Entry -> Notes; the oldest Notes
+    // thoughts are trimmed only when Notes has no room. Numbers are permanent, so trimming
+    // never renumbers anything that remains.
     function syncThoughtCard(name, TC, marked) {
       const ts = ensureThoughtState();
       let list = Array.isArray(ts.byChar[name]) ? ts.byChar[name] : [];
+
       const entryFit = fitNewest(list, CFG.THOUGHT_ENTRY_MAX_CHARS);
       const notesFit = fitNewest(entryFit.dropped, CFG.THOUGHT_NOTES_MAX_CHARS);
+
+      // Drop the oldest thoughts that no longer fit anywhere so state stays bounded.
       const keepCount = entryFit.kept.length + notesFit.kept.length;
       if (keepCount < list.length) {
         list = list.slice(list.length - keepCount);
         ts.byChar[name] = list;
       }
-      const entry = entryFit.kept.length ? renderThoughtLines(entryFit.kept) : "(no thoughts yet)";
-      const notes = notesFit.kept.length ? renderThoughtLines(notesFit.kept) : "";
+
+      // DISPLAY ORDER (storage is always oldest->newest, so overflow/trim above is unaffected).
+      // Descending reverses each field's kept items so the newest number sits at the top:
+      //   ascending  Entry [3,4,5] Notes [1,2]  ->  3,4,5 / 1,2
+      //   descending Entry [5,4,3] Notes [2,1]  ->  5,4,3 / 2,1
+      const desc = TC && TC.order === "descending";
+      const entryItems = desc ? entryFit.kept.slice().reverse() : entryFit.kept;
+      const notesItems = desc ? notesFit.kept.slice().reverse() : notesFit.kept;
+      const entry = entryItems.length ? renderThoughtLines(entryItems) : "(no thoughts yet)";
+      const notes = notesItems.length ? renderThoughtLines(notesItems) : "";
+
+      // On a NEW thought (marked), DELETE the existing card first so the create below makes
+      // a BRAND-NEW card. AID's card menu is sorted by card CREATION order (newest first)
+      // and ignores array position, so recreating is the only thing that actually lifts a
+      // freshly-updated card to the top -- it becomes "newest" like a first-time thinker's
+      // card. All thought text lives in state (ts.byChar), so the deleted card is fully
+      // rebuilt from entry/notes below and nothing is lost. On non-marked syncs (e.g. the
+      // 💭 marker expiring) we patch in place, so the card keeps its position.
       if (marked) removeStoryCardByKeys(thoughtCardToken(name));
+
       createOrPatchStoryCard(
         thoughtCardTitle(name, !!marked), // "Name - Thoughts" (+ 💭 while recently updated)
         CFG.THOUGHT_CARD_TYPE,
@@ -11892,6 +12790,12 @@ function MCPV5Create_living_characters() {
         notes                       // older overflow (Notes field)
       );
     }
+
+    // Strip the 💭 marker from EVERY Thought Card title (optionally keeping it on one
+    // character). Title-only: it re-titles the card in place and never touches Entry,
+    // Notes, storage, numbering, or rollover. Scans the live story cards directly (not
+    // just ts.markedChar), so it SELF-CORRECTS cases where a prior glitch left 💭 stuck
+    // on more than one card. Ensures there is never more than one marked Thought Card.
     function clearAllThoughtMarkers(keepName) {
       if (!Array.isArray(globalThis.storyCards)) return;
       const prefix = CFG.THOUGHT_MARKER + " ";
@@ -11899,6 +12803,7 @@ function MCPV5Create_living_characters() {
       for (let i = 0; i < storyCards.length; i++) {
         const card = storyCards[i];
         if (!card || typeof card.title !== "string") continue;
+        // Only our Thought Cards (non-matching key prefix), and only if currently marked.
         if (String(card.keys || "").indexOf(CFG.THOUGHT_CARD_KEY_PREFIX) !== 0) continue;
         if (card.title.indexOf(prefix) !== 0) continue;
         const bare = card.title.slice(prefix.length);
@@ -11906,9 +12811,16 @@ function MCPV5Create_living_characters() {
         card.title = bare;
       }
     }
+
+    // Normalize a thought for loose duplicate comparison: lowercase, strip punctuation,
+    // collapse whitespace.
     function normThought(t) {
       return String(t || "").toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
     }
+
+    // True when two thoughts are near-duplicates -- exact-normalized match, or high token
+    // overlap (Jaccard on unique words). Catches "I hope this works" vs "I really hope this
+    // works out" so repetitive/samey thoughts do not pile up.
     function thoughtsTooSimilar(a, b) {
       a = normThought(a); b = normThought(b);
       if (!a || !b) return false;
@@ -11923,6 +12835,10 @@ function MCPV5Create_living_characters() {
       const uni = keysA.length + keysB.length - inter;
       return uni > 0 && (inter / uni) >= 0.6;
     }
+
+    // Append a thought with a PERMANENT number. No overwrite, no keys. The stored list is
+    // NOT capped by count -- syncThoughtCard bounds it by character count (Entry/Notes), so
+    // removing old thoughts never renumbers the survivors.
     function appendThought(name, text, TC) {
       const ts = ensureThoughtState();
       name = cleanName(name);
@@ -11930,19 +12846,30 @@ function MCPV5Create_living_characters() {
       if (!name || !text) return false;
       if (!Array.isArray(ts.byChar[name])) ts.byChar[name] = [];
       const arr = ts.byChar[name];
+      // Skip near-duplicates against this character's recent thoughts (not just the immediately
+      // previous exact string), so repetitive/samey thoughts do not accumulate.
       const recent = arr.slice(-5);
       for (let i = 0; i < recent.length; i++) {
         if (thoughtsTooSimilar(recent[i].text, text)) return false;
       }
+      // Per-character counter that only ever increases: if the last thought was #10, the
+      // next is #11 even after #1 is deleted. Never reset, never reused.
       if (typeof ts.seq[name] !== "number") ts.seq[name] = 0;
       ts.seq[name] += 1;
       arr.push({ n: ts.seq[name], text: text });
+      // Visual activity marker: 💭 moves to the card that just updated. Strip 💭 off EVERY
+      // Thought Card first (self-correcting any stuck markers), then mark only this one, so
+      // exactly one card carries 💭. (Also clears on a timer; see expireThoughtMarker.)
+      // Display-only -- does not touch Life Cards, storage, or Entry/Notes.
       clearAllThoughtMarkers(name);
       ts.markedChar = name;
       ts.markedTurn = (ensureState().turn) || 0;
       syncThoughtCard(name, TC, true);
       return true;
     }
+
+    // Clear the 💭 marker after THOUGHT_MARKER_TURNS turns so it reads as "recent" activity
+    // and comes back down on its own. Runs once per context turn; re-titles one card at most.
     function expireThoughtMarker() {
       const ts = ensureThoughtState();
       if (!ts.markedChar) return;
@@ -11952,19 +12879,53 @@ function MCPV5Create_living_characters() {
         ts.markedChar = "";
       }
     }
+
+
+    // Candidate thought-characters for THIS turn, per THOUGHT_SCENE_MODE.
+    // Thought Cards are journals of what characters are thinking in/around the CURRENT
+    // story moment, so by default only scene-relevant characters are eligible. There is
+    // NO silent fallback to the full roster -- if nobody relevant is present, the caller
+    // generates nothing this turn (an off-screen thought feels disconnected/confusing).
+    //   scene  -> ONLY characters detected in the current scene (tight trailing window).
+    //   recent -> characters in the wider recent-scene window (current + just-mentioned).
+    //   roster -> ANY configured thought character (opt-in; intentional off-screen/"chaos"
+    //             thoughts). This is the ONLY mode that ignores scene relevance.
+    // Detection mirrors the Life Card scene detector (whole-word name match on the recent
+    // story text), but uses the THOUGHT roster and its OWN window -- fully separate from
+    // Life Card scene relevance.
     function thoughtCandidates(TC, contextText) {
+      // Thought Cards are player-facing journals, so they should only come from
+      // scene-relevant characters. This prevents disconnected off-screen thoughts from
+      // random roster characters (e.g. a thought appearing for someone not in the scene).
       const roster = unique(TC.characters || []);
       if (!roster.length) return [];
+      // THOUGHT_SCENE_MODE handling:
+      //   roster -> opt-in off-screen/"chaos" mode: ANY configured thought character.
+      //             This is the ONLY mode that skips the scene-relevance gate.
       if (TC.sceneMode === "roster") return roster;
       const recent = recentSceneText(contextText);  // history tail (up to SCENE_SCAN_CHARS)
+      //   scene  -> tight CURRENT-scene window (default).
+      //   recent -> wider recent-scene window (current + just-mentioned).
       const tight = recent.length > CFG.THOUGHT_SCENE_TIGHT_CHARS ? recent.slice(-CFG.THOUGHT_SCENE_TIGHT_CHARS) : recent;
       const text = (TC.sceneMode === "recent") ? recent : tight;
+      // The first-person POV lead (protagonist) is rarely written by name in the scene, but
+      // is always present. When PROTAGONIST_ALWAYS_PRESENT is on, keep the protagonist
+      // eligible even when unnamed -- mirroring the Life Card scene detector -- so an unnamed
+      // lead like Sam can still be selected for a thought. Everyone else still needs a
+      // whole-word name match in the current scene.
+      // Fallback prevention: do NOT fall back to the full roster unless THOUGHT_SCENE_MODE
+      // is explicitly "roster". If nobody is scene-relevant, return [] and the caller makes
+      // no thought this turn -- an off-screen thought would feel disconnected.
       const pKey = LC.protagonist ? cleanName(LC.protagonist).toLowerCase() : "";
       return roster.filter(function(n) {
         if (pKey && LC.protagonistAlwaysPresent && cleanName(n).toLowerCase() === pKey) return true;
         return containsWholeWord(text, n);
       });
     }
+
+    // Decide whether to fire a thought this turn; if so, select a character, stamp the
+    // attempt, and return the ASK string (LC_PRIVATE-wrapped) to append to context.
+    // Sets ts.pendingChar for the output hook. Independent of Life Cards.
     function buildThoughtAsk(contextText) {
       const ts = ensureThoughtState();
       ts.pendingChar = "";
@@ -11980,16 +12941,27 @@ function MCPV5Create_living_characters() {
       ts.pendingChar = name;
       ts.candidates = cands.slice(); // remember who was scene-relevant, for capture attribution
       ts.lastThoughtTurn = turn;
+      // Names of the OTHER people currently in the scene (reuses the scene actors computed this
+      // turn). Feeding the model the actual names is what makes it write "Jessica" instead of
+      // "she" -- it can only use a name it is reminded of.
       const present = (ensureState().sceneActors || []).filter(function (n) { return n && n !== name; });
       const nameHint = present.length
         ? " Others present (name on first mention): " + present.join(", ") + "."
         : "";
+      // ONE leading first-person parenthetical, name-LABELED so the thinker is unambiguous.
+      // Naming rule: each other character is NAMED on first mention, then referred to with a
+      // pronoun -- keeps who's-who clear without the clunky repeated-name reading.
       return "\n\n<LC_PRIVATE>\n" +
         "Begin your reply with ONE short parenthetical: " + name + "'s own private thought right now, in first person (I / me / my), ONE sentence, LABELED with their name. " +
         "Every other character must be named (first name) once before any pronoun or nickname; after that use normal flow of wording with pronouns." + nameHint + " " +
         "Make it a specific reaction to this exact moment, not a generic or repeated line. Then continue the story normally. The parenthetical is hidden from the player automatically. Format: (" + name + ": I ...)\n" +
         "</LC_PRIVATE>";
     }
+
+    // Resolve a free-text name label (from a "Name:" thought prefix) to a configured Thought
+    // character, case-insensitive and whitespace-normalized. Returns the canonical roster
+    // name, or "" if the label is not a known Thought character. Used to ATTRIBUTE a labeled
+    // thought to the correct card instead of blindly trusting the asked character.
     function resolveThoughtCharacter(label, TC) {
       const want = cleanName(label).toLowerCase();
       if (!want) return "";
@@ -11999,25 +12971,53 @@ function MCPV5Create_living_characters() {
       }
       return "";
     }
+
+    // Remove EVERY name-labeled thought parenthetical "(KnownThoughtChar: ...)" from text,
+    // wherever it sits. Narrow on purpose: only parentheticals whose label resolves to a
+    // CONFIGURED Thought character are touched, so ordinary narrative asides are left alone.
+    // This is the BACKSTOP that stops a thought leaking into the visible story even when the
+    // model places it mid- or end-of-reply instead of at the start.
     function stripLabeledThoughts(text, TC) {
       return String(text || "").replace(/\(\s*([A-Za-z][\w '\-]{0,30})\s*:\s*[^)]*\)/g, function (full, name) {
         return resolveThoughtCharacter(name, TC) ? "" : full;
       });
     }
+
+    // Tidy the double-space / space-before-punctuation a removed mid-sentence parenthetical can
+    // leave behind. Touches spaces/tabs only -- never newlines.
     function tidyThoughtSeam(text) {
       return String(text || "").replace(/[ \t]{2,}/g, " ").replace(/[ \t]+([.,!?;:])/g, "$1");
     }
+
+    // Output-hook capture. Pulls the character's thought out of the reply and onto their card,
+    // and -- crucially -- removes it from the visible story WHEREVER it appears so it can never
+    // leak. Order:
+    //   1) PRIMARY: a name-labeled thought "(KnownThoughtChar: ...)" ANYWHERE in the reply
+    //      (start, middle, or end). Filed under the LABELED character (attribution fix), then
+    //      removed from the text. This is the leak fix: a thought placed at the end is caught.
+    //   2) FALLBACK (pending turn only): an unlabeled LEADING first-person parenthetical, filed
+    //      under the asked character. Gated to pending turns so a narrative aside is not eaten.
+    //   3) BACKSTOP (always): strip any remaining labeled thought parentheticals so none leak.
     function captureThought(original) {
       const ts = ensureThoughtState();
       const TC = buildThoughtConfig();
       let text = String(original || "");
       const asked = ts.pendingChar;                                    // who we asked (scene-relevant), or ""
       const allowed = Array.isArray(ts.candidates) ? ts.candidates : []; // scene-relevant thinkers this turn
+
+      // A resolved label is TRUSTED only if it is who we asked OR another scene-relevant
+      // candidate this turn. When two characters are near-identical (e.g. two attorneys),
+      // the model often swaps the name in the parenthetical; an off-scene / not-asked label
+      // is treated as a MISLABEL and its thought is filed under the character we ACTUALLY
+      // asked -- never redirected to a character who was not in the scene.
       const isTrusted = function (who) {
         if (!who) return false;
         if (asked && who === asked) return true;
         return allowed.indexOf(who) !== -1;
       };
+
+      // 1) PRIMARY: scan labeled parentheticals. Prefer one labeled with a TRUSTED character;
+      //    otherwise keep the first resolvable one as the thought body to re-attribute.
       const labeled = /\(\s*([A-Za-z][\w '\-]{0,30})\s*:\s*([^)]*)\)/g;
       let mm, firstResolvable = null, trustedHit = null;
       while ((mm = labeled.exec(text)) !== null) {
@@ -12029,6 +13029,8 @@ function MCPV5Create_living_characters() {
       }
       const chosen = trustedHit || firstResolvable;
       if (chosen) {
+        // Trusted label -> file under it. Untrusted label (mislabel) -> file under the asked
+        // character; only when nothing was asked do we fall back to the label as best-effort.
         const target = trustedHit ? trustedHit.who : (asked || chosen.who);
         const body = cleanText(chosen.body);
         if (body) appendThought(target, body, TC);              // dedup happens inside appendThought
@@ -12036,6 +13038,8 @@ function MCPV5Create_living_characters() {
         text = stripLabeledThoughts(text, TC);                  // remove any extra labeled thoughts
         return tidyThoughtSeam(text);
       }
+
+      // 2) FALLBACK: only when a thought was asked this turn, an unlabeled LEADING parenthetical.
       if (asked) {
         const m = /^\s*\(([^)]*)\)/.exec(text);
         if (m) {
@@ -12049,15 +13053,20 @@ function MCPV5Create_living_characters() {
           }
         }
       }
+
+      // 3) BACKSTOP: even if nothing was captured, never let a labeled thought leak.
       return stripLabeledThoughts(text, TC);
     }
+
     function handleOutput(rawText) {
       const original = String(rawText || "");
       const parseSource = stripSelectedBlocks(original, ["LC_PRIVATE", "LC_SEED", "LC_CARDS", "CG_PRIVATE", "CG_SEED", "CG_CARDS"]);
+      // Current tag is LC_MEMORY; also accept legacy CG_MEMORY from in-flight stories.
       let memoryBlocks = extractBlocks(parseSource, "LC_MEMORY");
       if (!memoryBlocks.length) memoryBlocks = extractBlocks(parseSource, "CG_MEMORY");
       const cg = ensureState();
       let parsedMemory = false;
+
       if (memoryBlocks.length) {
         const memory = parseMemoryBlock(memoryBlocks[0]);
         if (memory.owner && memory.event) {
@@ -12068,14 +13077,27 @@ function MCPV5Create_living_characters() {
           cg.lastRoll = "MEMORY block seen but unparseable (owner/event missing)";
         }
       }
+
+      // Safety net: if the narrator used an on-screen seed but skipped <LC_MEMORY>,
+      // mark the pressure card active (without inventing event text).
       if (!parsedMemory) {
         maybeAutoCompleteOnscreenSeed(original);
       }
+
+      // THOUGHT CARD capture: ONLY when a thought was asked this turn (Thought system).
+      // Captures the leading parenthetical and strips it from visible text. Independent of Life Cards.
       const visibleText = captureThought(original);
+
       syncCards();
       updateDebugCard();
+      // Return the post-thought text WITHOUT trimming. The final output boundary
+      // (finalizeResult) removes private tags, PRESERVES the model's leading separator so the
+      // narration does not jam onto the prior story text, tidies the body, and applies the
+      // empty/whitespace Unicode fallback -- so every return path (normal, early-exit, error)
+      // is handled in one place.
       return visibleText;
     }
+
     function handleContext(rawText) {
       const cg = ensureState();
       cg.turn = (cg.turn || 0) + 1;
@@ -12085,21 +13107,32 @@ function MCPV5Create_living_characters() {
       const active = buildActiveThreadsBlock();
       advanceThreadDormancy(); // dormancy progression only; injects nothing
       syncCards();
+      // Thought system (independent of Life Cards): age the 💭 marker, then decide +
+      // inject the thought ASK.
       expireThoughtMarker();
       const thoughtAsk = buildThoughtAsk(rawText);
       updateDebugCard();
+      // Order matches the released build: the ACTIVE LIFE THREADS block is LAST so it is the
+      // most salient thing the model reads (this is what makes Dynamic Large use the cards).
+      // The thought ASK goes BEFORE it -- it only governs how the reply STARTS, so it does
+      // not need to be last, and keeping it last was displacing the Life Cards.
       return String(rawText || "").trimEnd() + directive + thoughtAsk + active;
     }
+
     function handleInput(rawText) {
       ensureState();
       return stripBlocks(rawText);
     }
+
+    // Load the editable config card into a runtime object the whole engine reads.
+    // Safe defaults are used if the card is missing or unreadable.
     let LC = {
       protagonist: "",
       characters: [],
       rosterCharacters: [],
       rosterSource: "none",
       pressures: CFG.DEFAULT_PRESSURES.slice(),
+      worldEvents: [],
       activityOff: false,
       activityTurns: CFG.DEFAULT_ACTIVITY_TURNS,
       legacyActivityUsed: false,
@@ -12121,6 +13154,7 @@ function MCPV5Create_living_characters() {
       threadReminderEvery: CFG.THREAD_REMINDER_EVERY
     };
     try { LC = buildRuntimeConfig(); } catch (e) {}
+
     const text = getGlobalText("");
     let result = text;
     try {
@@ -12129,48 +13163,62 @@ function MCPV5Create_living_characters() {
       else if (hook === "input") result = handleInput(text);
       else result = text;
     } catch (e) {
+      // A thrown hook must not collapse to "" or a bare space (both read as an empty
+      // response in AID). Start from the original text; finalizeResult below guarantees a
+      // safe non-empty return and re-strips private tags for the output hook.
       debugFallback("catch:" + hook, (e && e.message) ? e.message : String(e));
       result = text;
     }
+    // FINAL OUTPUT BOUNDARY: every hook returns through here, so no path can hand AID an
+    // empty / whitespace-only / null / undefined value. Logs which branch fell back.
     result = finalizeResult(hook, result, text);
     setGlobalText(result);
     return result;
   }
+
+  // Backward-compatibility alias. Existing adventures whose Context/Output/Input
+  // modifier tabs call ChaosGoblinV2(...) keep working without any edits.
   function ChaosGoblinV2(hook, hookText) {
     return LivingCharacters(hook, hookText);
   }
+
   function run(tab) {
     if (tab === "input") {
       return (function () {
         const modifier = (text) => {
-            text = LivingCharacters("input", text);
-            return { text };
+          text = LivingCharacters("input", text);
+          return { text };
         };
+
         return modifier(text);
       })();
     }
     if (tab === "context") {
       return (function () {
         const modifier = (text) => {
-            text = LivingCharacters("context", text);
-            return { text };
+          text = LivingCharacters("context", text);
+          return { text };
         };
+
         return modifier(text);
       })();
     }
     if (tab === "output") {
       return (function () {
         const modifier = (text) => {
-            text = LivingCharacters("output", text);
-            return { text };
+          text = LivingCharacters("output", text);
+          return { text };
         };
+
         return modifier(text);
       })();
     }
     return { text: MCPV5SafeText(globalThis.text, "\u200B") };
   }
+
   return { run };
 }
+
 function MCPV5Create_true_auto_stats() {
   onLibrary_TAS();
   function onLibrary_TAS() {
@@ -21255,7 +22303,7 @@ function MCPV5Create_information_firewall() {
 }
 function MCPV5Create_character_continuity() {
   const CHARACTER_CONTINUITY_STABLE_SETTINGS = {
-    VERSION: "Character Continuity Stable v1.0.73",
+    VERSION: "Character Continuity Stable v1.0.74",
     OUTER_CHARACTER_LABEL: "Outer",
     INNER_CHARACTER_LABEL: "Inner",
     VIEWS_LABEL: "Views",
@@ -21272,6 +22320,7 @@ function MCPV5Create_character_continuity() {
     CARD_TYPE: "Continuity",
     CARD_KEY_PREFIX: "__CC_STABLE_CARD__:",
     SCRIPT_CARD_TITLE: "Script Story Card",
+
     DEFAULT_ENABLED: true,
     DEFAULT_CONTINUITY_BUDGET: 2000,
     DEFAULT_STATE_LIFETIME: 3,
@@ -21284,6 +22333,7 @@ function MCPV5Create_character_continuity() {
     DEFAULT_CUSTOM_RELATIONSHIP_DIRECT: 10,
     DEFAULT_CUSTOM_RELATIONSHIP_MAX_STAGES: 1,
     DEFAULT_DEBUG: false,
+
     MAX_ACTIVE_NPCS: 5,
     MIN_CONTINUITY_BUDGET: 1800,
     MAX_OUTER_CARD_CHARS: 2000,
@@ -21328,6 +22378,7 @@ function MCPV5Create_character_continuity() {
     SITUATION_EXPERIENCE_CONFIRMATIONS: 3,
     DEBUG_LOGS: false
   };
+
   function CharacterContinuity(hook, incomingText) {
     const settings = CHARACTER_CONTINUITY_STABLE_SETTINGS;
     const originalText = incomingText;
@@ -21354,17 +22405,21 @@ function MCPV5Create_character_continuity() {
     const namedTitlePartsCache = new Map();
     const namedCardOwnerCache = new Map();
     let cardCatalog = null;
+
     function finish(value) {
       return typeof value === "string" && value.length ? value : " ";
     }
+
     function debug(message) {
       if (settings.DEBUG_LOGS === true) {
         log("[Character Continuity Stable] " + message);
       }
     }
+
     function textOf(value) {
       return value === null || value === undefined ? "" : String(value);
     }
+
     function clean(value, limit) {
       return textOf(value)
         .replace(/\r/g, "")
@@ -21373,12 +22428,14 @@ function MCPV5Create_character_continuity() {
         .trim()
         .slice(0, Math.max(1, Number(limit) || 10000));
     }
+
     function line(value, limit) {
       return clean(value, Math.max(limit * 3, limit))
         .replace(/\s*\n\s*/g, " ")
         .trim()
         .slice(0, Math.max(1, Number(limit) || 500));
     }
+
     function wrappedLine(value, limit) {
       const max = Math.max(4, Number(limit) || 500);
       const source = clean(value, 20000).replace(/\s*\n\s*/g, " ").trim();
@@ -21390,12 +22447,14 @@ function MCPV5Create_character_continuity() {
         ? source.slice(0, max - 2).trimEnd() + " " + closing
         : source.slice(0, max);
     }
+
     function wholeLine(value, max) {
       const result = clean(value, 20000).replace(/\s*\n\s*/g, " ").trim();
       if (!result) return "";
       const limit = Math.max(0, Number(max) || 0);
       return limit > 0 && result.length > limit ? "" : result;
     }
+
     function keyOf(value) {
       return textOf(value)
         .toLowerCase()
@@ -21404,6 +22463,7 @@ function MCPV5Create_character_continuity() {
         .replace(/[^a-z0-9]+/g, " ")
         .trim();
     }
+
     function nameKeyOf(value) {
       return textOf(value)
         .normalize("NFKC")
@@ -21413,16 +22473,20 @@ function MCPV5Create_character_continuity() {
         .replace(/[ \t\r\n]+/g, " ")
         .trim();
     }
+
     function sameNameForm(left, right) {
       const leftKey = nameKeyOf(left);
       return !!leftKey && leftKey === nameKeyOf(right);
     }
+
     function escapeRegExp(value) {
       return textOf(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
+
     function clone(value) {
       try { return JSON.parse(JSON.stringify(value)); } catch { return null; }
     }
+
     function unique(values, limit) {
       const result = [];
       (Array.isArray(values) ? values : []).forEach(value => {
@@ -21431,6 +22495,7 @@ function MCPV5Create_character_continuity() {
       });
       return result;
     }
+
     function uniqueNameForms(values, limit) {
       const result = [];
       (Array.isArray(values) ? values : []).forEach(value => {
@@ -21439,29 +22504,34 @@ function MCPV5Create_character_continuity() {
       });
       return result;
     }
+
     function boolValue(value, fallback) {
       const normalized = keyOf(value);
       if (["true", "yes", "on", "1", "enabled"].includes(normalized)) return true;
       if (["false", "no", "off", "0", "disabled"].includes(normalized)) return false;
       return fallback;
     }
+
     function numberValue(value, fallback, min, max) {
       const parsed = parseInt(value, 10);
       if (!Number.isFinite(parsed)) return fallback;
       return Math.max(min, Math.min(max, parsed));
     }
+
     function positiveWhole(value, fallback) {
       const source = textOf(value).trim();
       if (!/^\d+$/.test(source)) return fallback;
       const parsed = Number(source);
       return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
     }
+
     function estimateTokens(value) {
       const source = textOf(value).trim();
       if (!source) return 0;
       const structural = (source.match(/[{}[\]<>\":,\\]/g) || []).length;
       return Math.ceil((Math.max(0, source.length - structural) / 3.25) + (structural / 1.8));
     }
+
     function hashString(value) {
       const source = textOf(value);
       let hash = 2166136261;
@@ -21471,13 +22541,16 @@ function MCPV5Create_character_continuity() {
       }
       return (hash >>> 0).toString(16);
     }
+
     function storeSessionFor(kind) {
       return storeSession[keyOf(kind)] || null;
     }
+
     function storeIsFresh(kind, value) {
       const session = storeSessionFor(kind);
       return !!(session && session.loaded && !session.dirty && value);
     }
+
     function recordStoreParse(kind, writesAtStart) {
       const session = storeSessionFor(kind);
       if (!session) return;
@@ -21485,6 +22558,7 @@ function MCPV5Create_character_continuity() {
       session.parses += 1;
       session.dirty = session.writes > Math.max(0, Number(writesAtStart) || 0);
     }
+
     function verifiedStoreAfterParse(kind, currentStore, refresh) {
       const session = storeSessionFor(kind);
       if (!session || !session.dirty || typeof refresh !== "function") return currentStore;
@@ -21498,6 +22572,7 @@ function MCPV5Create_character_continuity() {
       session.verifying = false;
       return verified;
     }
+
     function markStoreDirty(kind, reason) {
       const session = storeSessionFor(kind);
       if (!session) return;
@@ -21508,6 +22583,7 @@ function MCPV5Create_character_continuity() {
       session.invalidations += 1;
       session.lastWrite = line(reason, 240);
     }
+
     function storeKindForManagedTitle(value) {
       const parts = ownedCardTitleParts(value);
       if (!parts) return "";
@@ -21518,12 +22594,14 @@ function MCPV5Create_character_continuity() {
       if (keyOf(parts.label) === keyOf(settings.EXPERIENCES_LABEL)) return "experiences";
       return "";
     }
+
     function markManagedTitlesDirty(values, reason) {
       const kinds = new Set((Array.isArray(values) ? values : [values])
         .map(storeKindForManagedTitle)
         .filter(Boolean));
       kinds.forEach(kind => markStoreDirty(kind, reason));
     }
+
     function storeSessionSummary() {
       return STORE_KINDS.map(kind => {
         const session = storeSession[kind];
@@ -21532,6 +22610,7 @@ function MCPV5Create_character_continuity() {
           + session.writes + "w" + (unexpected ? "!" : (session.verificationFailed ? "?" : ""));
       }).join(", ");
     }
+
     function storeSessionWarnings() {
       return STORE_KINDS.flatMap(kind => {
         const session = storeSession[kind];
@@ -21547,36 +22626,44 @@ function MCPV5Create_character_continuity() {
         return warnings;
       }).filter(Boolean);
     }
+
     function visibleTitleOf(card) {
       if (!card) return "";
       return line(typeof card.title === "string" ? card.title : "", 220);
     }
+
     function entryOf(card) {
       return card && typeof card.entry === "string" ? card.entry : "";
     }
+
     function encodedManagedTitle(value) {
       return line(value, 220)
         .replace(/%/g, "%25")
         .replace(/,/g, "%2C");
     }
+
     function decodedManagedTitle(value) {
       return line(value, 1000)
         .replace(/%2C/gi, ",")
         .replace(/%25/gi, "%")
         .slice(0, 220);
     }
+
     function managedCardKey(title) {
       const logicalTitle = line(title, 220);
       return logicalTitle ? settings.CARD_KEY_PREFIX + encodedManagedTitle(logicalTitle) : "";
     }
+
     function managedTitleFromKey(value) {
       const source = textOf(value).trim();
       if (!source.startsWith(settings.CARD_KEY_PREFIX)) return "";
       return decodedManagedTitle(source.slice(settings.CARD_KEY_PREFIX.length));
     }
+
     function defaultScriptCardTitle(value) {
       return keyOf(value) === keyOf(settings.SCRIPT_CARD_TITLE);
     }
+
     const OWNED_CARD_LABELS = [
       settings.OUTER_CHARACTER_LABEL,
       settings.INNER_CHARACTER_LABEL,
@@ -21608,10 +22695,12 @@ function MCPV5Create_character_continuity() {
       "^(.+?)\\s+(?:—|–|-)\\s+(" + OWNED_CARD_LABEL_PATTERN + ")(?:\\s+(\\d+))?$",
       "i"
     );
+
     function canonicalOwnedLabel(value) {
       const normalized = keyOf(value);
       return OWNED_CARD_LABELS.find(label => keyOf(label) === normalized) || "";
     }
+
     function ownedCardTitle(name, label, page = 1) {
       const owner = line(name, 120);
       const canonicalLabel = canonicalOwnedLabel(label);
@@ -21621,6 +22710,7 @@ function MCPV5Create_character_continuity() {
       if (keyOf(canonicalLabel) === "identity" && !sameNameForm(owner, "Player")) return "";
       return owner + "'s " + canonicalLabel + (pageNumber > 1 ? " " + pageNumber : "");
     }
+
     function ownedCardTitleParts(value) {
       const source = line(value, 260);
       const possessive = source.match(POSSESSIVE_OWNED_TITLE);
@@ -21645,13 +22735,16 @@ function MCPV5Create_character_continuity() {
         title: ownedCardTitle(owner, label, page)
       };
     }
+
     function canonicalOwnedCardTitle(value) {
       const parts = ownedCardTitleParts(value);
       return parts ? parts.title : "";
     }
+
     function managedTitleFromEntry(card) {
       const source = entryOf(card).replace(/\r/g, "");
       if (!source.trim()) return "";
+
       const profile = source.match(
         /^\s*\{\s*(.+?)['’]s\s+(Outer|Inner)\s*:/i
       );
@@ -21661,17 +22754,20 @@ function MCPV5Create_character_continuity() {
           : settings.INNER_CHARACTER_LABEL;
         return ownedCardTitle(profile[1], label);
       }
+
       const stateProfile = source.match(
         /^\s*\{\s*(.+?)['’]s\s+current\s+private\s+State\s*:/i
       );
       if (stateProfile) {
         return ownedCardTitle(stateProfile[1], settings.STATE_LABEL);
       }
+
       const headers = source.split("\n")
         .map(row => row.trim())
         .filter(row => row && row !== "{" && row !== "}")
         .slice(0, 4);
       if (headers.includes("Active NPC slots:")) return settings.ACTIVE_NPCS_TITLE;
+
       for (const header of headers) {
         const paged = header.match(
           /^(.+?)['’]s\s+(Buried Views|Views|Names|Relationships)(?:\s+(\d+))?\s*:\s*$/i
@@ -21687,6 +22783,7 @@ function MCPV5Create_character_continuity() {
           const page = paged[3] ? Number(paged[3]) : 1;
           return ownedCardTitle(owner, label, page);
         }
+
         const experiences = header.match(
           /^(.+?)['’]s\s+Experiences(?:\s+(\d+))?\s*:\s*$/i
         );
@@ -21695,6 +22792,7 @@ function MCPV5Create_character_continuity() {
           return ownedCardTitle(experiences[1], settings.EXPERIENCES_LABEL, page);
         }
       }
+
       if (hasSettingsField(source, "Enabled")
         && hasSettingsField(source, "Continuity budget")
         && hasSettingsField(source, "State lifetime")) {
@@ -21702,6 +22800,7 @@ function MCPV5Create_character_continuity() {
       }
       return "";
     }
+
     function titleOf(card) {
       if (!card) return "";
       const rawKeys = card.keys;
@@ -21733,14 +22832,17 @@ function MCPV5Create_character_continuity() {
       });
       return value;
     }
+
     function invalidateCardCatalog() {
       cardCatalog = null;
     }
+
     function catalogAppend(map, key, value) {
       if (!key) return;
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(value);
     }
+
     function currentCardCatalog() {
       if (cardCatalog) return cardCatalog;
       const catalog = {
@@ -21773,18 +22875,22 @@ function MCPV5Create_character_continuity() {
       cardCatalog = catalog;
       return catalog;
     }
+
     function catalogRecordsByTitle(title) {
       return (currentCardCatalog().byTitle.get(keyOf(title)) || []).slice();
     }
+
     function catalogRecordsByRawKey(value) {
       return (currentCardCatalog().byRawKey.get(textOf(value).trim()) || []).slice();
     }
+
     function firstCatalogCard(records) {
       const ordered = (Array.isArray(records) ? records : [])
         .filter(record => record && record.card)
         .sort((left, right) => left.index - right.index);
       return ordered.length ? ordered[0].card : null;
     }
+
     function catalogNamedLabel(label) {
       const catalog = currentCardCatalog();
       const labelKey = keyOf(label);
@@ -21800,13 +22906,16 @@ function MCPV5Create_character_continuity() {
       catalog.namedLabels.set(labelKey, index);
       return index;
     }
+
     function catalogNamedCards(name, label) {
       const records = catalogNamedLabel(label).byOwner.get(nameKeyOf(name)) || [];
       return records.map(record => record.card);
     }
+
     function catalogNamedOwners(label) {
       return catalogNamedLabel(label).records.map(record => record.owner);
     }
+
     function catalogPagedLabel(label) {
       const catalog = currentCardCatalog();
       const labelKey = keyOf(label);
@@ -21831,14 +22940,17 @@ function MCPV5Create_character_continuity() {
       catalog.pagedLabels.set(labelKey, index);
       return index;
     }
+
     function catalogPagedCards(name, label) {
       return (catalogPagedLabel(label).byOwner.get(nameKeyOf(name)) || [])
         .map(record => ({ card: record.card, page: record.page }));
     }
+
     function catalogCardOrder(card) {
       const index = currentCardCatalog().indexByCard.get(card);
       return Number.isInteger(index) ? index : -1;
     }
+
     function restoreVisibleCardTitle(card, intendedTitle) {
       const logicalTitle = line(intendedTitle, 220);
       if (!card || !logicalTitle) return card;
@@ -21851,18 +22963,21 @@ function MCPV5Create_character_continuity() {
       }
       return card;
     }
+
     function managedCardIdentityMatches(card, intendedTitle) {
       const logicalTitle = line(intendedTitle || titleOf(card), 220);
       return !!(card && logicalTitle
         && textOf(card.keys).trim() === managedCardKey(logicalTitle)
         && keyOf(visibleTitleOf(card)) === keyOf(logicalTitle));
     }
+
     function findCard(title) {
       const wantedKey = managedCardKey(title);
       const matches = catalogRecordsByTitle(title)
         .concat(wantedKey ? catalogRecordsByRawKey(wantedKey) : []);
       return firstCatalogCard(matches);
     }
+
     function cardIndex(card) {
       if (!card) return -1;
       const catalog = currentCardCatalog();
@@ -21872,6 +22987,7 @@ function MCPV5Create_character_continuity() {
       const match = id ? firstCatalogCard(catalog.byId.get(id) || []) : null;
       return match ? catalog.indexByCard.get(match) : -1;
     }
+
     function extractLine(source, label) {
       const match = textOf(source).match(new RegExp(
         "^[ \\t]*(?:[\\{\\[][ \\t]*)?" + escapeRegExp(label)
@@ -21880,6 +22996,7 @@ function MCPV5Create_character_continuity() {
       ));
       return match ? line(match[1], 2000) : "";
     }
+
     function updateCardAt(index, keys, entry, type, intendedTitle) {
       if (!Number.isInteger(index) || index < 0 || index >= cards.length) return null;
       const current = cards[index];
@@ -21913,6 +23030,7 @@ function MCPV5Create_character_continuity() {
         return null;
       }
     }
+
     function saveCard(card, entry, intendedTitle) {
       const index = cardIndex(card);
       if (index < 0) return null;
@@ -21927,6 +23045,7 @@ function MCPV5Create_character_continuity() {
         logicalTitle
       );
     }
+
     function addCard(title, entry) {
       const cardTitle = line(title, 220);
       if (!cardTitle) return null;
@@ -21960,10 +23079,12 @@ function MCPV5Create_character_continuity() {
       if (added && created) markManagedTitlesDirty(cardTitle, "Added " + cardTitle);
       return created;
     }
+
     function upsertCard(title, entry) {
       const card = findCard(title);
       return card ? saveCard(card, entry) : addCard(title, entry);
     }
+
     function removeCard(card) {
       const index = cardIndex(card);
       if (index < 0) return false;
@@ -21978,6 +23099,7 @@ function MCPV5Create_character_continuity() {
         return false;
       }
     }
+
     function removeCards(cardList) {
       const indices = unique((Array.isArray(cardList) ? cardList : [])
         .map(cardIndex)
@@ -22000,9 +23122,11 @@ function MCPV5Create_character_continuity() {
       });
       return removed;
     }
+
     function namedTitle(name, label) {
       return ownedCardTitle(name, label);
     }
+
     function nameFromNamedTitle(title, label) {
       const cacheKey = textOf(label) + "\u241f" + textOf(title);
       if (namedCardOwnerCache.has(cacheKey)) return namedCardOwnerCache.get(cacheKey);
@@ -22013,14 +23137,18 @@ function MCPV5Create_character_continuity() {
       namedCardOwnerCache.set(cacheKey, owner);
       return owner;
     }
+
     function namedCards(name, label) {
       return catalogNamedCards(name, label);
     }
+
     function namedCard(name, label) {
       return catalogNamedCards(name, label)[0] || null;
     }
+
     const titleMigrationDiagnostics = [];
     const wrapperMigrationDiagnostics = [];
+
     function ownedEntryWrapperInfo(value, owner, headerLabel) {
       const source = textOf(value).replace(/\r/g, "");
       const rows = source.split("\n");
@@ -22072,6 +23200,7 @@ function MCPV5Create_character_continuity() {
         closingIndex: nonempty[nonempty.length - 1].index
       };
     }
+
     function canonicalOwnedEntryWrapper(value, owner, headerLabel) {
       const info = ownedEntryWrapperInfo(value, owner, headerLabel);
       if (!info.valid) {
@@ -22091,6 +23220,7 @@ function MCPV5Create_character_continuity() {
         entry
       };
     }
+
     function physicalLogicalCardTitle(card) {
       const managed = managedTitleFromKey(card && card.keys);
       if (managed) return managed;
@@ -22098,6 +23228,7 @@ function MCPV5Create_character_continuity() {
       if (visible && !defaultScriptCardTitle(visible)) return visible;
       return managedTitleFromEntry(card);
     }
+
     function migrateOwnedCardTitles() {
       let migrated = 0;
       let failed = 0;
@@ -22122,6 +23253,7 @@ function MCPV5Create_character_continuity() {
         );
       }
     }
+
     function migrateOwnedEntryWrappers() {
       let migrated = 0;
       let failed = 0;
@@ -22154,12 +23286,14 @@ function MCPV5Create_character_continuity() {
         );
       }
     }
+
     function duplicateCardEntrySignature(card) {
       return entryOf(card)
         .replace(/\r/g, "")
         .replace(/[ \t]+$/gm, "")
         .trim();
     }
+
     function strictBoundedWhole(value, fallback, minimum, maximum) {
       const source = textOf(value).trim();
       if (!/^\d+$/.test(source)) return { value: fallback, valid: false };
@@ -22169,6 +23303,7 @@ function MCPV5Create_character_continuity() {
       }
       return { value: parsed, valid: true };
     }
+
     function relationshipPaceSettings(source) {
       const presets = {
         slowburn: { name: "Slowburn", accumulated: 1, direct: 10, maxStages: 1 },
@@ -22217,6 +23352,7 @@ function MCPV5Create_character_continuity() {
       }
       return { pace, warning: warnings.join(" ") };
     }
+
     function settingsTemplate() {
       return [
         "Enabled: " + (settings.DEFAULT_ENABLED !== false),
@@ -22233,9 +23369,11 @@ function MCPV5Create_character_continuity() {
         "Debug: " + (settings.DEFAULT_DEBUG === true)
       ].join("\n");
     }
+
     function hasSettingsField(source, label) {
       return new RegExp("^[ \\t]*" + escapeRegExp(label) + "[ \\t]*:", "im").test(textOf(source));
     }
+
     function ensureRelationshipSettings(card) {
       if (!card) return { card: null, warning: "" };
       const source = entryOf(card);
@@ -22253,6 +23391,7 @@ function MCPV5Create_character_continuity() {
         ? { card: saved, warning: "Added the missing Relationship pace controls to CC — Settings." }
         : { card, warning: "The missing Relationship pace controls could not be added to CC — Settings." };
     }
+
     function readRuntime() {
       const title = settings.SETTINGS_TITLE;
       let card = findCard(title);
@@ -22313,10 +23452,12 @@ function MCPV5Create_character_continuity() {
           .filter(Boolean).join(" ")
       };
     }
+
     const runtime = readRuntime();
     if (!runtime.enabled) return finish(originalText);
     migrateOwnedCardTitles();
     migrateOwnedEntryWrappers();
+
     function playerProfile() {
       let card = findCard(settings.PLAYER_TITLE);
       if (card) card = saveCard(card, entryOf(card), settings.PLAYER_TITLE) || card;
@@ -22340,7 +23481,9 @@ function MCPV5Create_character_continuity() {
         agreement: keyOf(forms[0]) === "they" ? "plural" : "singular"
       };
     }
+
     const player = playerProfile();
+
     function resolvePlayerTokens(value) {
       const forms = {
         name: player.name,
@@ -22365,11 +23508,13 @@ function MCPV5Create_character_continuity() {
         return replacement;
       });
     }
+
     function normalizeCastStatus(value, fallback) {
       const normalized = keyOf(value);
       if (normalized === "main" || normalized === "side") return normalized;
       return fallback;
     }
+
     function parseOuterPronouns(source) {
       const parts = textOf(extractLine(source, "Name, age, gender, pronouns"))
         .split(",")
@@ -22385,6 +23530,7 @@ function MCPV5Create_character_continuity() {
       }
       return pronouns;
     }
+
     function shortenProfileValue(value, maximum) {
       const source = line(value, 20000);
       const max = Math.max(1, Number(maximum) || 1);
@@ -22397,6 +23543,7 @@ function MCPV5Create_character_continuity() {
         : candidate;
       return kept.replace(/[,:;\-/]+$/g, "").trimEnd() + "…";
     }
+
     function renderOuterBlock(name, fields) {
       return [
         "{",
@@ -22405,6 +23552,7 @@ function MCPV5Create_character_continuity() {
         "}"
       ].join("\n");
     }
+
     function outerWrapperStatus(source) {
       const trimmed = textOf(source).replace(/\r/g, "").trim();
       return {
@@ -22412,6 +23560,7 @@ function MCPV5Create_character_continuity() {
         closing: trimmed.endsWith("}")
       };
     }
+
     function buildOuterProfile(name, source) {
       const resolved = resolvePlayerTokens(source);
       const fields = [
@@ -22451,6 +23600,7 @@ function MCPV5Create_character_continuity() {
         missing: fields.filter(field => !field.value).map(field => field.label)
       };
     }
+
     function renderInnerBlock(name, fields) {
       return [
         "{",
@@ -22459,8 +23609,10 @@ function MCPV5Create_character_continuity() {
         "}"
       ].join("\n");
     }
+
     function buildInnerProfile(name, source) {
       const resolved = resolvePlayerTokens(source);
+
       const fields = [
         { label: "Personality", value: extractLine(resolved, "Personality") },
         { label: "Mannerisms", value: extractLine(resolved, "Mannerisms") },
@@ -22500,13 +23652,16 @@ function MCPV5Create_character_continuity() {
         missing: fields.filter(field => !field.value).map(field => field.label)
       };
     }
+
     const activeRosterDiagnostics = [];
+
     function activeNpcSlotCode(number) {
       const slot = Number(number);
       return Number.isSafeInteger(slot) && slot >= 1 && slot <= settings.MAX_ACTIVE_NPCS
         ? "N" + slot
         : "";
     }
+
     function activeNpcRosterEntry(slotNames) {
       const names = Array.isArray(slotNames) ? slotNames : [];
       const rows = ["{", "Active NPC slots:"];
@@ -22516,11 +23671,13 @@ function MCPV5Create_character_continuity() {
       rows.push("}");
       return rows.join("\n");
     }
+
     function activeNpcRosterName(value) {
       const source = textOf(value).trim();
       if (!source || source.length > 120 || /[{}\[\]|\r\n]/.test(source)) return "";
       return line(source, 120);
     }
+
     function readActiveNpcRoster() {
       const matching = catalogRecordsByTitle(settings.ACTIVE_NPCS_TITLE)
         .map(record => record.card);
@@ -22581,9 +23738,11 @@ function MCPV5Create_character_continuity() {
       });
       return { card, slots, source, wrapperValid };
     }
+
     function onboardingMarkerPresent(source) {
       return /^[ \\t]*Onboarding[ \\t]*:[ \\t]*Pending[ \\t]*$/im.test(textOf(source));
     }
+
     const ONBOARDING_VIEW_CATEGORIES = ["Loves", "Likes", "Neutrals", "Dislikes", "Hates"];
     const ONBOARDING_RELATIONSHIP_FIELDS = ["Role", "Trust", "Closeness", "Boundaries", "Conflict"];
     const ONBOARDING_RELATIONSHIP_STAGES = {
@@ -22629,6 +23788,7 @@ function MCPV5Create_character_continuity() {
       "Accepted Nickname",
       "Rejected Nickname"
     ];
+
     function onboardingFieldRows(source, label) {
       const pattern = new RegExp(
         "^[ \\t]*" + escapeRegExp(label) + "[ \\t]*:[ \\t]*(.*?)[ \\t]*$",
@@ -22641,15 +23801,18 @@ function MCPV5Create_character_continuity() {
         })
         .filter(Boolean);
     }
+
     function onboardingReadyValue(source) {
       const matches = onboardingFieldRows(source, "Ready");
       if (matches.length !== 1) return "";
       const normalized = keyOf(matches[0].value);
       return normalized === "yes" || normalized === "no" ? normalized : "";
     }
+
     function onboardingProfileHeaderValid(source, name, label) {
       return ownedEntryWrapperInfo(source, name, label).valid;
     }
+
     function onboardingMissingDetails(outerSource, innerSource, innerConflict) {
       const missing = [];
       const outerWrapper = outerWrapperStatus(outerSource);
@@ -22676,6 +23839,7 @@ function MCPV5Create_character_continuity() {
       }
       return missing;
     }
+
     function onboardingOuterTemplate(name) {
       return [
         "{",
@@ -22690,6 +23854,7 @@ function MCPV5Create_character_continuity() {
         "}"
       ].join("\n");
     }
+
     function onboardingInnerTemplate(name) {
       return [
         "{",
@@ -22704,6 +23869,7 @@ function MCPV5Create_character_continuity() {
         "}"
       ].join("\n");
     }
+
     function onboardingNamesTemplate(name) {
       return [
         "{",
@@ -22718,6 +23884,7 @@ function MCPV5Create_character_continuity() {
         "}"
       ].join("\n");
     }
+
     function onboardingViewsTemplate(name) {
       return [
         "{",
@@ -22730,6 +23897,7 @@ function MCPV5Create_character_continuity() {
         "}"
       ].join("\n");
     }
+
     function onboardingRelationshipsTemplate(name) {
       return [
         "{",
@@ -22743,9 +23911,11 @@ function MCPV5Create_character_continuity() {
         "}"
       ].join("\n");
     }
+
     function onboardingExperiencesTitle(name) {
       return ownedCardTitle(name, settings.EXPERIENCES_LABEL);
     }
+
     function onboardingExperiencesTemplate(name) {
       return [
         "{",
@@ -22755,6 +23925,7 @@ function MCPV5Create_character_continuity() {
         "}"
       ].join("\n");
     }
+
     function onboardingInsertControls(source, includeReady) {
       const rows = textOf(source).replace(/\r/g, "").split("\n");
       if (!onboardingMarkerPresent(source)) {
@@ -22771,14 +23942,17 @@ function MCPV5Create_character_continuity() {
       }
       return rows.join("\n");
     }
+
     function onboardingWithoutControls(source) {
       return textOf(source).replace(/\r/g, "").split("\n")
         .filter(row => !/^[ \t]*(?:Onboarding|Ready)[ \t]*:/i.test(row))
         .join("\n");
     }
+
     function onboardingOuterNames() {
       return catalogNamedOwners(settings.OUTER_CHARACTER_LABEL);
     }
+
     function onboardingCanonicalPermission(value) {
       const supplied = line(value, 160);
       const normalized = nameKeyOf(supplied);
@@ -22788,6 +23962,7 @@ function MCPV5Create_character_continuity() {
       const matches = onboardingOuterNames().filter(name => sameNameForm(name, supplied));
       return matches.length === 1 ? matches[0] : "";
     }
+
     function onboardingCanonicalTarget(ownerName, value, allowSelf, allowUnknown) {
       const supplied = line(value, 160);
       const normalized = nameKeyOf(supplied);
@@ -22798,6 +23973,7 @@ function MCPV5Create_character_continuity() {
       if (matches.length === 1 && !sameNameForm(matches[0], ownerName)) return matches[0];
       return allowUnknown && !/[{}\[\]|\r\n]/.test(supplied) ? supplied : "";
     }
+
     function onboardingValidateProfile(name, label, source, maximum) {
       const errors = [];
       if (!onboardingProfileHeaderValid(source, name, label)) {
@@ -22840,6 +24016,7 @@ function MCPV5Create_character_continuity() {
       if (entry.length > maximum) errors.push(label + " exceeds its character limit");
       return { entry, errors };
     }
+
     function onboardingCanonicalProgress(value) {
       const raw = line(value, 2000);
       if (!raw) return { ok: true, value: "" };
@@ -22860,6 +24037,7 @@ function MCPV5Create_character_continuity() {
       }
       return { ok: true, value: unique(normalized, 200).join("; ") };
     }
+
     function onboardingPageEnvelope(source, expectedHeader) {
       const rows = textOf(source).replace(/\r/g, "").split("\n");
       const nonempty = rows.map((value, index) => ({ value: value.trim(), index }))
@@ -22889,6 +24067,7 @@ function MCPV5Create_character_continuity() {
         closingIndex: nonempty.length ? nonempty[nonempty.length - 1].index : rows.length
       };
     }
+
     function onboardingCanonicalNames(name, source) {
       const envelope = onboardingPageEnvelope(source, name + "'s Names:");
       const rows = envelope.rows;
@@ -22997,6 +24176,7 @@ function MCPV5Create_character_continuity() {
       }
       return { entry, errors };
     }
+
     function onboardingCanonicalViews(name, source) {
       const rows = textOf(source).replace(/\r/g, "").split("\n");
       const nonempty = rows.map((value, index) => ({ value: value.trim(), index }))
@@ -23059,6 +24239,7 @@ function MCPV5Create_character_continuity() {
       }
       return { entry, errors };
     }
+
     function onboardingCanonicalRelationshipField(field, value) {
       const raw = line(value, 4000);
       if (!raw) return { ok: true, value: "" };
@@ -23098,6 +24279,7 @@ function MCPV5Create_character_continuity() {
         value: score + " (" + stage.label + ")" + (description ? " — " + description : "")
       };
     }
+
     function onboardingCanonicalRelationships(name, source) {
       const envelope = onboardingPageEnvelope(source, name + "'s Relationships:");
       const rows = envelope.rows;
@@ -23193,6 +24375,7 @@ function MCPV5Create_character_continuity() {
       }
       return { entry, errors };
     }
+
     function onboardingCanonicalExperiences(name, source) {
       const envelope = onboardingPageEnvelope(source, name + "'s Experiences:");
       const rows = envelope.rows;
@@ -23264,6 +24447,7 @@ function MCPV5Create_character_continuity() {
       }
       return { entry, errors };
     }
+
     function onboardingCommitPack(name, pack) {
       const outer = onboardingValidateProfile(
         name,
@@ -23351,9 +24535,11 @@ function MCPV5Create_character_continuity() {
       }
       return { ok: true };
     }
+
     function onboardingExactCards(title) {
       return catalogRecordsByTitle(title).map(record => record.card);
     }
+
     function ensureOnboardingPackCard(name, title, template, label) {
       let matching = onboardingExactCards(title);
       if (!matching.length) {
@@ -23368,6 +24554,7 @@ function MCPV5Create_character_continuity() {
       }
       return matching[0];
     }
+
     function storedAliasOwners(alias) {
       const owners = [];
       catalogPagedLabel(settings.NAMES_LABEL).records.forEach(item => {
@@ -23388,6 +24575,7 @@ function MCPV5Create_character_continuity() {
       });
       return owners;
     }
+
     function ensureConfirmedOnboarding(slot) {
       if (!slot || !slot.valid || !slot.name) return;
       const reserved = ["self", "player", "the player"].includes(nameKeyOf(slot.name));
@@ -23451,6 +24639,7 @@ function MCPV5Create_character_continuity() {
         || onboardingMarkerPresent(entryOf(outerCards[0]))
         || onboardingMarkerPresent(entryOf(innerCards[0]));
       if (!onboarding) return;
+
       const outerControlled = onboardingInsertControls(entryOf(outerCards[0]), true);
       if (outerControlled !== entryOf(outerCards[0])) {
         const saved = saveCard(
@@ -23483,6 +24672,7 @@ function MCPV5Create_character_continuity() {
         }
         innerCards[0] = saved;
       }
+
       const pack = {
         outer: outerCards[0],
         inner: innerCards[0],
@@ -23537,11 +24727,14 @@ function MCPV5Create_character_continuity() {
         activeRosterDiagnostics.push(slot.name + " remains pending: " + committed.error + ".");
       }
     }
+
     const activeNpcRoster = readActiveNpcRoster();
     activeNpcRoster.slots.forEach(ensureConfirmedOnboarding);
+
     const characterDiscoveryDiagnostics = [];
     let preparedProfileCount = 0;
     let rosterSkippedProfileCount = 0;
+
     function discoverCharacters() {
       const label = settings.OUTER_CHARACTER_LABEL;
       const prepared = catalogNamedLabel(label).records;
@@ -23593,6 +24786,7 @@ function MCPV5Create_character_continuity() {
             + " conflicting Outer cards; excluded this identity until only one remains."
         );
       });
+
       return accepted.map(candidate => {
         const { index, name, duplicateCount } = candidate;
         let outerCard = candidate.card;
@@ -23711,6 +24905,7 @@ function MCPV5Create_character_continuity() {
         };
       });
     }
+
     const characters = discoverCharacters();
     const VIEW_CATEGORIES = ["Loves", "Likes", "Neutrals", "Dislikes", "Hates"];
     const VIEW_CATEGORY_INDEX = VIEW_CATEGORIES.reduce((result, category, index) => {
@@ -23754,22 +24949,26 @@ function MCPV5Create_character_continuity() {
         { label: "Rupture", minimum: 40, maximum: 49, midpoint: 45 }
       ]
     };
+
     function relationshipStage(field, score) {
       const stages = RELATIONSHIP_STAGES[field] || [];
       return stages.find(stage => score >= stage.minimum && score <= stage.maximum) || null;
     }
+
     function relationshipDestination(field, value) {
       const wanted = keyOf(value);
       if (field === "Role" && wanted === "former") return { special: "Former", label: "Former" };
       if (field === "Boundaries" && wanted === "released") return { special: "Released", label: "Released" };
       return (RELATIONSHIP_STAGES[field] || []).find(stage => keyOf(stage.label) === wanted) || null;
     }
+
     function relationshipRange(field) {
       const stages = RELATIONSHIP_STAGES[field] || [];
       return stages.length
         ? { minimum: stages[0].minimum, maximum: stages[stages.length - 1].maximum }
         : { minimum: 0, maximum: 0 };
     }
+
     const TRIGGER_RULES = {
       affection: { feeling: "affectionate", goal: "show care" },
       anger: { feeling: "angry", goal: "confront the cause", tension: "anger strains restraint" },
@@ -23796,17 +24995,21 @@ function MCPV5Create_character_continuity() {
       repair: { feeling: "cautiously relieved", goal: "continue repairing the relationship" },
       betrayal: { feeling: "betrayed", goal: "protect themself from further harm", tension: "betrayal ruptures trust" }
     };
+
     const TRIGGER_CODES = Object.keys(TRIGGER_RULES);
     const TIME_JUMP = /\b(?:(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|several|many|\d+)\s+(?:days?|weeks?|months?|years?|decades?)\s+later|(?:days?|weeks?|months?|years?|decades?)\s+(?:passed|went by)|after\s+(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|several|many|\d+)\s+(?:days?|weeks?|months?|years?|decades?)|the next (?:morning|day|week|month|year)|by the following (?:week|month|year))\b/i;
+
     function normalizeTriggerCode(value) {
       const code = keyOf(value).replace(/\s+/g, "_");
       return Object.prototype.hasOwnProperty.call(TRIGGER_RULES, code) ? code : "";
     }
+
     function triggerList(value) {
       const raw = Array.isArray(value) ? value : textOf(value).split(/[,;\s]+/);
       return unique(raw.map(normalizeTriggerCode).filter(Boolean), 40)
         .slice(0, settings.MAX_STATE_TRIGGERS);
     }
+
     function normalizedTargetKey(value) {
       const source = line(value, 240).toLowerCase();
       if (source === "self" || source === "player") return source;
@@ -23817,21 +25020,26 @@ function MCPV5Create_character_continuity() {
       }
       return keyOf(source);
     }
+
     const PROVENANCE_KINDS = { S: "state", X: "experience", R: "relationship", V: "view" };
     const OPERATION_KINDS = ["name", "state", "relationship", "view", "experience"];
     const MODEL_OPERATION_KINDS = ["name", "state", "relationship", "view"];
+
     function provenanceId(value) {
       const id = textOf(value).trim().toUpperCase();
       return /^[SXRV]\d+$/.test(id) ? id : "";
     }
+
     function provenanceSourceIds(values) {
       return unique(Array.isArray(values) ? values : [], 40)
         .map(value => textOf(value).trim().toUpperCase())
         .filter(value => /^[ESXRV]\d+$/.test(value));
     }
+
     function canonicalRelationshipFieldName(value) {
       return RELATIONSHIP_FIELDS.find(field => keyOf(field) === keyOf(value)) || "";
     }
+
     function canonicalRelationshipUseSignature(ownerKey, targetKey, sourceId, sourceIdentity, field) {
       const canonicalField = canonicalRelationshipFieldName(field);
       const canonicalSourceId = provenanceId(sourceId);
@@ -23849,6 +25057,7 @@ function MCPV5Create_character_continuity() {
         canonicalField
       ]), 500);
     }
+
     function parseRelationshipUseSignature(value) {
       let parsed;
       try { parsed = JSON.parse(textOf(value)); } catch { return null; }
@@ -23867,6 +25076,7 @@ function MCPV5Create_character_continuity() {
         signature
       };
     }
+
     function canonicalViewDestination(value) {
       const category = VIEW_CATEGORIES.find(item => keyOf(item) === keyOf(value));
       if (category) return category;
@@ -23875,6 +25085,7 @@ function MCPV5Create_character_continuity() {
       if (normalized === "recovered") return "Recovered";
       return "";
     }
+
     function canonicalViewOperationMode(value) {
       const normalized = keyOf(value);
       if (normalized === "o" || normalized === "ordinary") return "O";
@@ -23884,6 +25095,7 @@ function MCPV5Create_character_continuity() {
       if (normalized === "reconciled" || normalized === "reconcile" || normalized === "reconciliation") return "Reconciled";
       return "";
     }
+
     function canonicalViewUseSignature(ownerKey, targetKey, sourceId, sourceIdentity, destination, operationMode) {
       const canonicalSourceId = provenanceId(sourceId);
       const normalizedOwner = line(ownerKey, 160);
@@ -23903,6 +25115,7 @@ function MCPV5Create_character_continuity() {
         canonicalMode
       ]), 500);
     }
+
     function parseViewUseSignature(value) {
       let parsed;
       try { parsed = JSON.parse(textOf(value)); } catch { return null; }
@@ -23922,9 +25135,11 @@ function MCPV5Create_character_continuity() {
         signature
       };
     }
+
     function parseProvenanceUseSignature(value) {
       return parseRelationshipUseSignature(value) || parseViewUseSignature(value);
     }
+
     function provenanceUseSignatures(values) {
       const result = [];
       (Array.isArray(values) ? values : []).forEach(value => {
@@ -23933,6 +25148,7 @@ function MCPV5Create_character_continuity() {
       });
       return result;
     }
+
     function relationshipUseSignatureForRecord(record, ownerKey, targetKey, field) {
       if (!record || (record.kind !== "state" && record.kind !== "experience")) return "";
       return canonicalRelationshipUseSignature(
@@ -23943,6 +25159,7 @@ function MCPV5Create_character_continuity() {
         field
       );
     }
+
     function viewUseSignatureForRecord(record, ownerKey, targetKey, destination, operationMode) {
       if (!record || (record.kind !== "relationship" && record.kind !== "experience")) return "";
       return canonicalViewUseSignature(
@@ -23954,11 +25171,13 @@ function MCPV5Create_character_continuity() {
         operationMode
       );
     }
+
     function provenanceUseCommitted(record, signature) {
       const parsed = parseProvenanceUseSignature(signature);
       return !!(record && parsed && parsed.sourceId === record.id
         && provenanceUseSignatures(record.uses).includes(parsed.signature));
     }
+
     function commitProvenanceUse(record, signature) {
       const parsed = parseProvenanceUseSignature(signature);
       const legalSource = parsed && (
@@ -23973,12 +25192,14 @@ function MCPV5Create_character_continuity() {
       record.uses = prior.concat(parsed.signature);
       return { ok: true, duplicate: false, signature: parsed.signature };
     }
+
     function blankProvenanceLedger() {
       return {
         records: [],
         nextNumbers: { S: 1, X: 1, R: 1, V: 1 }
       };
     }
+
     function normalizeProvenanceRecord(raw) {
       const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
       const id = provenanceId(source.id);
@@ -24047,6 +25268,7 @@ function MCPV5Create_character_continuity() {
         active: source.active !== false
       };
     }
+
     function normalizeProvenanceLedger(raw) {
       const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
       const fallback = blankProvenanceLedger();
@@ -24065,10 +25287,12 @@ function MCPV5Create_character_continuity() {
       });
       return { records, nextNumbers };
     }
+
     function continuitySourceId(value) {
       const id = textOf(value).trim().toUpperCase();
       return /^[ESXRV]\d+$/.test(id) ? id : "";
     }
+
     function legalSourcePrefixes(kind) {
       return {
         name: ["E"],
@@ -24077,14 +25301,17 @@ function MCPV5Create_character_continuity() {
         view: ["E", "R", "X"]
       }[keyOf(kind)] || [];
     }
+
     function sourceIdLegalForOperation(kind, id) {
       const sourceId = continuitySourceId(id);
       return !!(sourceId && legalSourcePrefixes(kind).includes(sourceId.charAt(0)));
     }
+
     function provenanceRecordById(id) {
       const wanted = provenanceId(id);
       return wanted ? CC.provenance.records.find(record => record.id === wanted) || null : null;
     }
+
     function allocateProvenanceId(prefixValue) {
       const prefix = textOf(prefixValue).trim().toUpperCase();
       if (!Object.prototype.hasOwnProperty.call(PROVENANCE_KINDS, prefix)) return "";
@@ -24092,6 +25319,7 @@ function MCPV5Create_character_continuity() {
       CC.provenance.nextNumbers[prefix] = number + 1;
       return prefix + number;
     }
+
     function stateSituationSignature(ownerKey, targetKey, situation) {
       return line([
         "state",
@@ -24100,6 +25328,7 @@ function MCPV5Create_character_continuity() {
         keyOf(situationPhrase(situation))
       ].join("|"), 500);
     }
+
     function managedSignatureStillValid(record) {
       if (!record || !record.managedSignature) return false;
       if (record.kind === "state") {
@@ -24134,6 +25363,7 @@ function MCPV5Create_character_continuity() {
       }
       return record.active !== false;
     }
+
     function rebindRelationshipExplanationProvenance(
       ownerKey,
       targetKey,
@@ -24192,6 +25422,7 @@ function MCPV5Create_character_continuity() {
       }
       return rebound;
     }
+
     function rebindViewExplanationProvenance(
       ownerKey,
       targetKey,
@@ -24230,6 +25461,7 @@ function MCPV5Create_character_continuity() {
       });
       return rebound;
     }
+
     function refreshProvenanceActivity() {
       if (CC.provenance.records.some(record => record.kind === "relationship")) {
         refreshRelationshipsStore();
@@ -24245,6 +25477,7 @@ function MCPV5Create_character_continuity() {
       });
       return CC.provenance.records;
     }
+
     function activeProvenanceRecords(filters = {}) {
       refreshProvenanceActivity();
       return CC.provenance.records.filter(record => {
@@ -24256,6 +25489,7 @@ function MCPV5Create_character_continuity() {
         return true;
       });
     }
+
     function storyLineageForSources(sourceIds, seen = new Set()) {
       const rawIds = [];
       provenanceSourceIds(sourceIds).forEach(id => {
@@ -24272,6 +25506,7 @@ function MCPV5Create_character_continuity() {
       });
       return rawIds;
     }
+
     function provenanceDependencyClosure(record, byId, seen = new Set()) {
       if (!record || seen.has(record.id)) return seen;
       seen.add(record.id);
@@ -24280,18 +25515,21 @@ function MCPV5Create_character_continuity() {
         .forEach(sourceId => provenanceDependencyClosure(byId[sourceId], byId, seen));
       return seen;
     }
+
     function boundedProvenanceRecords(records) {
       const normalized = (Array.isArray(records) ? records : [])
         .map(normalizeProvenanceRecord)
         .filter(Boolean);
       const maximum = Math.max(1, Number(settings.MAX_PROVENANCE_RECORDS) || 1);
       if (normalized.length <= maximum) return normalized;
+
       const byId = {};
       normalized.forEach(record => { byId[record.id] = record; });
       const selected = new Set();
       const candidates = normalized.map((record, index) => ({ record, index }))
         .sort((left, right) => Number(right.record.active) - Number(left.record.active)
           || right.index - left.index);
+
       candidates.forEach(({ record }) => {
         if (selected.has(record.id)) return;
         const closure = provenanceDependencyClosure(record, byId, new Set());
@@ -24299,9 +25537,11 @@ function MCPV5Create_character_continuity() {
         if (selected.size + additions.length > maximum) return;
         additions.forEach(id => selected.add(id));
       });
+
       if (!selected.size) normalized.slice(-maximum).forEach(record => selected.add(record.id));
       return normalized.filter(record => selected.has(record.id));
     }
+
     function appendProvenanceRecord(rawRecord) {
       const source = rawRecord && typeof rawRecord === "object" && !Array.isArray(rawRecord)
         ? { ...rawRecord }
@@ -24321,6 +25561,7 @@ function MCPV5Create_character_continuity() {
         + (record.sourceIds.join(",") || "no sources");
       return { ok: true, record: provenanceRecordById(record.id) };
     }
+
     function blankOperationMeter() {
       return {
         gain: 0,
@@ -24332,6 +25573,7 @@ function MCPV5Create_character_continuity() {
         lastField: ""
       };
     }
+
     function normalizeOperationMeter(raw) {
       const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
       return {
@@ -24346,17 +25588,20 @@ function MCPV5Create_character_continuity() {
         lastField: line(source.lastField, 80)
       };
     }
+
     function blankOwnerOperationState() {
       const result = {};
       OPERATION_KINDS.forEach(kind => { result[kind] = blankOperationMeter(); });
       return result;
     }
+
     function normalizeOwnerOperationState(raw) {
       const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
       const result = blankOwnerOperationState();
       OPERATION_KINDS.forEach(kind => { result[kind] = normalizeOperationMeter(source[kind]); });
       return result;
     }
+
     function operationDrainKey(record) {
       const source = record && typeof record === "object" && !Array.isArray(record) ? record : {};
       return [
@@ -24368,6 +25613,7 @@ function MCPV5Create_character_continuity() {
         line(source.evidenceSignature, 500)
       ].join("|");
     }
+
     function normalizeOperationDrainRecord(raw) {
       const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
       const kind = keyOf(source.kind);
@@ -24388,9 +25634,11 @@ function MCPV5Create_character_continuity() {
       record.key = operationDrainKey(record);
       return record.ownerKey && record.evidenceSignature ? record : null;
     }
+
     function blankOperationState() {
       return { owners: {}, drains: [] };
     }
+
     function effectiveOperationDrainValue(record, ownerOpportunity) {
       const normalized = normalizeOperationDrainRecord(record);
       if (!normalized) return 0;
@@ -24399,6 +25647,7 @@ function MCPV5Create_character_continuity() {
       const decay = elapsed * Math.max(0, Number(settings.OPERATION_POINTS.DECAY_PER_OWNER_OPPORTUNITY) || 0);
       return Math.max(0, normalized.value - decay);
     }
+
     function materializeOwnerDrainDecay(ownerKey, ownerOpportunity) {
       const normalizedOwner = line(ownerKey, 160);
       const opportunity = Math.max(0, Math.floor(Number(ownerOpportunity) || 0));
@@ -24435,6 +25684,7 @@ function MCPV5Create_character_continuity() {
           + " drain record" + (changed === 1 ? "" : "s") + ", removed " + removed + "."
       };
     }
+
     function normalizeOperationState(raw) {
       const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
       const owners = {};
@@ -24454,6 +25704,7 @@ function MCPV5Create_character_continuity() {
         .slice(-settings.MAX_OPERATION_DRAIN_RECORDS);
       return { owners, drains };
     }
+
     function blankSituation() {
       return {
         value: "",
@@ -24465,6 +25716,7 @@ function MCPV5Create_character_continuity() {
         promotedSignature: ""
       };
     }
+
     function blankState() {
       return {
         thought: { value: "", updatedClock: 0 },
@@ -24476,6 +25728,7 @@ function MCPV5Create_character_continuity() {
         triggers: { value: [], updatedClock: 0 }
       };
     }
+
     function normalizeState(raw, fallbackClock) {
       const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
       const result = blankState();
@@ -24527,6 +25780,7 @@ function MCPV5Create_character_continuity() {
       }
       return result;
     }
+
     function blankCast(startingStatus) {
       return {
         status: normalizeCastStatus(startingStatus, "side"),
@@ -24534,6 +25788,7 @@ function MCPV5Create_character_continuity() {
         inactiveStreak: 0
       };
     }
+
     function normalizeCast(raw, startingStatus) {
       const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
       return {
@@ -24542,15 +25797,18 @@ function MCPV5Create_character_continuity() {
         inactiveStreak: Math.max(0, Math.floor(Number(source.inactiveStreak) || 0))
       };
     }
+
     function blankNpc(startingStatus) {
       return { state: blankState(), cast: blankCast(startingStatus) };
     }
+
     function normalizeNpc(raw, startingStatus) {
       return {
         state: normalizeState(raw && raw.state, 0),
         cast: normalizeCast(raw && raw.cast, startingStatus)
       };
     }
+
     function initialStableState() {
       return {
         schemaVersion: 1,
@@ -24590,11 +25848,13 @@ function MCPV5Create_character_continuity() {
         }
       };
     }
+
     let CC = rootState.characterContinuityStableV1;
     if (!CC || typeof CC !== "object" || Array.isArray(CC) || CC.schemaVersion !== 1) {
       CC = initialStableState();
       rootState.characterContinuityStableV1 = CC;
     }
+
     const legacyCharacterKeyMap = {};
     const legacyCharacterGroups = {};
     characters.forEach(character => {
@@ -24607,6 +25867,7 @@ function MCPV5Create_character_continuity() {
         legacyCharacterKeyMap[legacyKey] = group[0].key;
       }
     });
+
     function migratedCharacterKey(value) {
       const source = textOf(value);
       if (legacyCharacterKeyMap[source]) return legacyCharacterKeyMap[source];
@@ -24616,6 +25877,7 @@ function MCPV5Create_character_continuity() {
       }
       return source;
     }
+
     function migratedCharacterKeys(values) {
       const result = [];
       (Array.isArray(values) ? values : []).forEach(value => {
@@ -24624,6 +25886,7 @@ function MCPV5Create_character_continuity() {
       });
       return result;
     }
+
     function migratedKeyedObject(value, nestedMigration) {
       const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
       const result = {};
@@ -24645,6 +25908,7 @@ function MCPV5Create_character_continuity() {
       keys.filter(key => migratedCharacterKey(key) !== key).forEach(assign);
       return result;
     }
+
     function migrateNpcIdentityKeys(rawNpc) {
       if (!rawNpc || typeof rawNpc !== "object" || Array.isArray(rawNpc)) return rawNpc;
       const rawState = rawNpc.state;
@@ -24658,6 +25922,7 @@ function MCPV5Create_character_continuity() {
       }
       return rawNpc;
     }
+
     function migrateEvidenceIdentityKeys(items) {
       (Array.isArray(items) ? items : []).forEach(item => {
         if (!item || typeof item !== "object" || Array.isArray(item)) return;
@@ -24668,6 +25933,7 @@ function MCPV5Create_character_continuity() {
         item.usedNamesBy = migratedKeyedObject(item.usedNamesBy);
       });
     }
+
     function migrateProvenanceUseIdentityKeys(values) {
       return provenanceUseSignatures((Array.isArray(values) ? values : []).map(value => {
         const parsed = parseProvenanceUseSignature(value);
@@ -24691,6 +25957,7 @@ function MCPV5Create_character_continuity() {
         );
       }));
     }
+
     function migrateProvenanceIdentityKeys(value) {
       const ledger = value && typeof value === "object" && !Array.isArray(value) ? value : blankProvenanceLedger();
       (Array.isArray(ledger.records) ? ledger.records : []).forEach(record => {
@@ -24701,6 +25968,7 @@ function MCPV5Create_character_continuity() {
       });
       return ledger;
     }
+
     function migrateOperationStateIdentityKeys(value) {
       const operationState = value && typeof value === "object" && !Array.isArray(value) ? value : blankOperationState();
       operationState.owners = migratedKeyedObject(operationState.owners);
@@ -24712,6 +25980,7 @@ function MCPV5Create_character_continuity() {
       });
       return operationState;
     }
+
     function migrateRecoveringViewKeys(value) {
       const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
       const result = {};
@@ -24727,6 +25996,7 @@ function MCPV5Create_character_continuity() {
       });
       return result;
     }
+
     function migratePlanIdentityKeys(plan) {
       if (!plan || typeof plan !== "object" || Array.isArray(plan)) return;
       ["ownerKey", "focusKey", "retryFocusKey", "conversationKey"].forEach(field => {
@@ -24782,6 +26052,7 @@ function MCPV5Create_character_continuity() {
       migratePacket(plan.sourcePacket);
       migratePacket(plan.retrySourcePacket);
     }
+
     function migrateSnapshotIdentityKeys(snapshot) {
       if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return;
       snapshot.npcs = migratedKeyedObject(snapshot.npcs, migrateNpcIdentityKeys);
@@ -24799,6 +26070,7 @@ function MCPV5Create_character_continuity() {
       snapshot.operationState = migrateOperationStateIdentityKeys(snapshot.operationState);
       migrateEvidenceIdentityKeys(snapshot.evidence);
     }
+
     function migrateStableIdentityKeys() {
       if (!Object.keys(legacyCharacterKeyMap).length) return;
       CC.npcs = migratedKeyedObject(CC.npcs, migrateNpcIdentityKeys);
@@ -24821,7 +26093,9 @@ function MCPV5Create_character_continuity() {
         CC.lastVisibleOutputAnchor.activeKeys = migratedCharacterKeys(CC.lastVisibleOutputAnchor.activeKeys);
       }
     }
+
     migrateStableIdentityKeys();
+
     characters.forEach(character => {
       if (!CC.npcs[character.key]) CC.npcs[character.key] = blankNpc(character.startingStatus);
       else CC.npcs[character.key] = normalizeNpc(CC.npcs[character.key], character.startingStatus);
@@ -24868,10 +26142,12 @@ function MCPV5Create_character_continuity() {
     if (typeof CC.last.provenanceCreated !== "string") CC.last.provenanceCreated = "None";
     if (!Number.isFinite(Number(CC.stateClock))) CC.stateClock = Math.max(0, Number(CC.visibleGenerationCount) || 0);
     CC.stateClock = Math.max(0, Number(CC.stateClock) || 0);
+
     function characterForActiveRosterName(name) {
       const matches = characters.filter(character => sameNameForm(character.name, name));
       return matches.length === 1 ? matches[0] : null;
     }
+
     function initializeActiveNpcRoster() {
       if (activeNpcRoster.card) return;
       const chosen = [];
@@ -24900,6 +26176,7 @@ function MCPV5Create_character_continuity() {
           + " of " + characters.length + " registered NPCs; preserved NPCs outside the five slots can be reconnected manually.");
       }
     }
+
     function activeNpcRosterCharacterSlots(includePending) {
       const used = new Set();
       return activeNpcRoster.slots.map(slot => {
@@ -24911,9 +26188,11 @@ function MCPV5Create_character_continuity() {
         return { number: slot.number, code: slot.code, name: character.name, character };
       }).filter(Boolean);
     }
+
     function activeNpcRosterCharacters() {
       return activeNpcRosterCharacterSlots(false).map(item => item.character);
     }
+
     function activeNpcRosterStatus() {
       return activeNpcRoster.slots.map(slot => {
         if (!slot.valid) return slot.code + "=Invalid";
@@ -24923,7 +26202,9 @@ function MCPV5Create_character_continuity() {
         return slot.code + "=" + character.name + (character.onboardingPending ? " (Pending)" : "");
       }).join(", ");
     }
+
     initializeActiveNpcRoster();
+
     function numberedNamedTitleParts(title, label) {
       const cacheKey = textOf(label) + "\u241f" + textOf(title);
       if (namedTitlePartsCache.has(cacheKey)) return namedTitlePartsCache.get(cacheKey);
@@ -24936,15 +26217,18 @@ function MCPV5Create_character_continuity() {
       namedTitlePartsCache.set(cacheKey, parts);
       return parts;
     }
+
     function viewPageTitle(character, buried, page) {
       const label = buried
         ? settings.BURIED_VIEWS_LABEL
         : settings.VIEWS_LABEL;
       return namedTitle(character.name, label) + (page > 1 ? " " + page : "");
     }
+
     function viewPageHeader(character, buried, page) {
       return character.name + "'s " + (buried ? "Buried Views" : "Views") + (page > 1 ? " " + page : "") + ":";
     }
+
     function renderViewsPage(character, buried, page, records) {
       const grouped = {};
       VIEW_CATEGORIES.forEach(category => { grouped[category] = []; });
@@ -24961,9 +26245,11 @@ function MCPV5Create_character_continuity() {
       rows.push("}");
       return rows.join("\n");
     }
+
     function emptyViewsEntry(character, buried, page) {
       return renderViewsPage(character, buried, page, []);
     }
+
     function canonicalViewTarget(owner, value) {
       const supplied = line(value, 160);
       const normalized = nameKeyOf(supplied);
@@ -24985,6 +26271,7 @@ function MCPV5Create_character_continuity() {
       }
       return { key: "target:" + keyOf(supplied), name: supplied };
     }
+
     function storedTargetName(targetKey, fallbackName) {
       const key = normalizedTargetKey(targetKey);
       if (key === "self") return "Self";
@@ -24995,11 +26282,13 @@ function MCPV5Create_character_continuity() {
       }
       return line(fallbackName, 120);
     }
+
     function modelTargetName(targetKey, fallbackName) {
       const key = normalizedTargetKey(targetKey);
       if (key === "player") return player.name;
       return storedTargetName(key, fallbackName);
     }
+
     function viewTargetAliases(record, owner) {
       if (!record) return [];
       if (record.targetKey === "self") return uniqueNameForms(["Self", owner && owner.name].concat(owner && owner.aliases || []), 160);
@@ -25010,6 +26299,7 @@ function MCPV5Create_character_continuity() {
       }
       return [record.targetName];
     }
+
     function parseViewsPage(character, card, buried, page) {
       const source = entryOf(card).replace(/\r/g, "");
       const trimmed = source.trim();
@@ -25073,20 +26363,24 @@ function MCPV5Create_character_continuity() {
         chars: source.length
       };
     }
+
     function viewPageCards(character, buried) {
       const label = buried
         ? settings.BURIED_VIEWS_LABEL
         : settings.VIEWS_LABEL;
       return catalogPagedCards(character.name, label);
     }
+
     function ensureBaseViewsCard(character) {
       const existing = viewPageCards(character, false).find(item => item.page === 1);
       if (existing) return existing.card;
       return addCard(viewPageTitle(character, false, 1), emptyViewsEntry(character, false, 1));
     }
+
     function nextViewsPageNumber(pages) {
       return Math.max(0, ...(Array.isArray(pages) ? pages.map(page => page.page) : [])) + 1;
     }
+
     function markViewDuplicates(pages, diagnostics, collectionName) {
       const groups = {};
       pages.forEach(page => page.records.forEach(record => {
@@ -25111,6 +26405,7 @@ function MCPV5Create_character_continuity() {
         }
       });
     }
+
     function markDuplicateViewPages(character, buried, pages, diagnostics) {
       const counts = {};
       pages.forEach(page => { counts[page.page] = (counts[page.page] || 0) + 1; });
@@ -25127,6 +26422,7 @@ function MCPV5Create_character_continuity() {
         page.records.forEach(record => { record.writable = false; });
       });
     }
+
     function repairViewsCollection(character, buried, pages, diagnostics) {
       const maximum = settings.MAX_VIEWS_CARD_CHARS;
       let changed = false;
@@ -25148,6 +26444,7 @@ function MCPV5Create_character_continuity() {
           changed = true;
         });
       });
+
       const overflow = [];
       repairablePages.forEach(page => {
         while (renderViewsPage(character, buried, page.page, page.records).length > maximum && page.records.length) {
@@ -25178,6 +26475,7 @@ function MCPV5Create_character_continuity() {
         record.card = destination.card;
         destination.records.push(record);
       });
+
       repairablePages.forEach(page => {
         const entry = renderViewsPage(character, buried, page.page, page.records);
         if (entry !== entryOf(page.card)) {
@@ -25194,7 +26492,9 @@ function MCPV5Create_character_continuity() {
       });
       return changed || overflow.length > 0;
     }
+
     let viewsStore = null;
+
     function refreshViewsStore(repair) {
       const session = storeSessionFor("views");
       let store = storeIsFresh("views", viewsStore) ? viewsStore : null;
@@ -25238,6 +26538,7 @@ function MCPV5Create_character_continuity() {
         recordStoreParse("views", writesAtStart);
         store = verifiedStoreAfterParse("views", store, () => refreshViewsStore(false));
       }
+
       if (repair && !(session && session.repaired)) {
         const priorBindings = viewManagedBindings(store);
         let changed = false;
@@ -25276,9 +26577,11 @@ function MCPV5Create_character_continuity() {
       viewsStore = store;
       return store;
     }
+
     function viewsForOwner(ownerKey) {
       return viewsStore && viewsStore.owners ? viewsStore.owners[ownerKey] || null : null;
     }
+
     function canonicalManagedViewRecord(record) {
       if (!record) return null;
       const category = canonicalViewDestination(record.category);
@@ -25286,6 +26589,7 @@ function MCPV5Create_character_continuity() {
       if (!category || !explanation) return null;
       return [category, hashString(explanation)];
     }
+
     function viewManagedSignature(ownerKey, targetKey, activeRecord, buriedRecord, recovering) {
       const normalizedOwner = line(ownerKey, 160);
       const normalizedTarget = normalizedTargetKey(targetKey);
@@ -25303,6 +26607,7 @@ function MCPV5Create_character_continuity() {
         recoveringFlag
       ]), 500);
     }
+
     function currentViewManagedSignature(ownerKey, targetKey) {
       const normalizedTarget = normalizedTargetKey(targetKey);
       if (!ownerKey || !normalizedTarget) return "";
@@ -25313,6 +26618,7 @@ function MCPV5Create_character_continuity() {
       const recovering = !!recoveringMarker(ownerKey, normalizedTarget) && !!active && !!buried;
       return viewManagedSignature(ownerKey, normalizedTarget, active, buried, recovering);
     }
+
     function viewManagedBindings(store) {
       const bindings = [];
       Object.values(store && store.owners || {}).forEach(ownerData => {
@@ -25339,6 +26645,7 @@ function MCPV5Create_character_continuity() {
       });
       return bindings;
     }
+
     function viewManagedStateSnapshot(ownerKey, targetKey) {
       const normalizedTarget = normalizedTargetKey(targetKey);
       if (!ownerKey || !normalizedTarget) {
@@ -25372,6 +26679,7 @@ function MCPV5Create_character_continuity() {
         description: parts.join(" + ") || "Absent"
       };
     }
+
     function orderedUniqueOwnedCatalogRecords(values) {
       const byCard = new Map();
       (Array.isArray(values) ? values : []).forEach(record => {
@@ -25381,6 +26689,7 @@ function MCPV5Create_character_continuity() {
       return Array.from(byCard.values())
         .sort((left, right) => catalogCardOrder(left.card) - catalogCardOrder(right.card));
     }
+
     function captureOwnedManagedCards(records) {
       const titleCounts = {};
       return orderedUniqueOwnedCatalogRecords(records).map(record => {
@@ -25398,6 +26707,7 @@ function MCPV5Create_character_continuity() {
         };
       });
     }
+
     function restoreOwnedManagedCards(snapshot, currentRecords, resolveOwnerKey) {
       const records = orderedUniqueOwnedCatalogRecords(currentRecords);
       const currentOwnerKeys = new Set(records.map(record => record.ownerKey).filter(Boolean));
@@ -25444,6 +26754,7 @@ function MCPV5Create_character_continuity() {
       if (!removeCards(stale)) restored = false;
       return restored;
     }
+
     function managedViewsRecords() {
       return orderedUniqueOwnedCatalogRecords(characters.flatMap(character =>
         catalogPagedCards(character.name, settings.VIEWS_LABEL)
@@ -25451,9 +26762,11 @@ function MCPV5Create_character_continuity() {
           .map(item => ({ card: item.card, ownerKey: character.key }))
       ));
     }
+
     function managedViewsCards() {
       return managedViewsRecords().map(record => record.card);
     }
+
     function managedViewsSnapshotOwnerKey(item) {
       const title = item && item.title;
       const parts = numberedNamedTitleParts(title, settings.VIEWS_LABEL)
@@ -25463,9 +26776,11 @@ function MCPV5Create_character_continuity() {
         : null;
       return character ? character.key : "";
     }
+
     function captureManagedViewsCards() {
       return captureOwnedManagedCards(managedViewsRecords());
     }
+
     function restoreManagedViewsCards(snapshot) {
       if (!Array.isArray(snapshot)) return false;
       const restored = restoreOwnedManagedCards(
@@ -25476,6 +26791,7 @@ function MCPV5Create_character_continuity() {
       refreshViewsStore(false);
       return restored;
     }
+
     function plannedViewsPages(ownerData, buried) {
       const source = buried ? ownerData.buriedPages : ownerData.activePages;
       return source.map(page => ({
@@ -25488,6 +26804,7 @@ function MCPV5Create_character_continuity() {
         records: page.records.map(record => ({ ...record }))
       }));
     }
+
     function plannedRecord(pages, targetKey) {
       for (const page of pages) {
         const record = page.records.find(item => item.targetKey === targetKey && !item.duplicate && !item.conflict && !item.oversize);
@@ -25495,10 +26812,12 @@ function MCPV5Create_character_continuity() {
       }
       return null;
     }
+
     function plannedPageFits(character, buried, page, records) {
       return renderViewsPage(character, buried, page.page, records).length
         <= settings.MAX_VIEWS_CARD_CHARS;
     }
+
     function createPlannedPage(character, buried, pages) {
       const pageNumber = nextViewsPageNumber(pages);
       const page = {
@@ -25514,6 +26833,7 @@ function MCPV5Create_character_continuity() {
       pages.sort((left, right) => left.page - right.page);
       return page;
     }
+
     function placePlannedRecord(character, buried, pages, record, preferredPage) {
       const candidates = pages.filter(page => page.safe).sort((left, right) => {
         const leftPreferred = left.page === preferredPage ? 1 : 0;
@@ -25530,6 +26850,7 @@ function MCPV5Create_character_continuity() {
       destination.dirty = true;
       return { ok: true, page: destination, record: placed };
     }
+
     function removePlannedRecord(found) {
       if (!found || !found.page || !found.record) return false;
       const index = found.page.records.indexOf(found.record);
@@ -25538,6 +26859,7 @@ function MCPV5Create_character_continuity() {
       found.page.dirty = true;
       return true;
     }
+
     function updatePlannedRecord(character, buried, pages, found, changes) {
       if (!found || !found.page.safe || !found.record.writable) {
         return { ok: false, error: "The target record belongs to a structurally unsafe page." };
@@ -25556,6 +26878,7 @@ function MCPV5Create_character_continuity() {
       removePlannedRecord(found);
       return placePlannedRecord(character, buried, pages, updated, 0);
     }
+
     function commitPlannedViews(character, activePages, buriedPages) {
       const pageSets = [
         { buried: false, pages: activePages },
@@ -25606,6 +26929,7 @@ function MCPV5Create_character_continuity() {
       refreshViewsStore(false);
       return { ok: true };
     }
+
     function transactViews(owner, operation) {
       refreshViewsStore(false);
       const ownerData = viewsForOwner(owner.key);
@@ -25617,7 +26941,9 @@ function MCPV5Create_character_continuity() {
       const committed = commitPlannedViews(owner, activePages, buriedPages);
       return committed.ok ? result : committed;
     }
+
     const NAME_STATUSES = ["Emerging", "Active", "Retired", "Rejected"];
+
     function allNameIdentities() {
       return [{
         key: "player",
@@ -25635,16 +26961,21 @@ function MCPV5Create_character_continuity() {
         character
       })));
     }
+
     const nameIdentities = allNameIdentities();
+
     function nameIdentityForKey(identityKey) {
       return nameIdentities.find(identity => identity.key === identityKey) || null;
     }
+
     function namePageTitle(identity, page) {
       return namedTitle(identity.titleBase, settings.NAMES_LABEL) + (page > 1 ? " " + page : "");
     }
+
     function namePageHeader(identity) {
       return identity.headerOwner + "'s Names:";
     }
+
     function canonicalPermission(value) {
       const supplied = line(value, 160);
       const normalized = nameKeyOf(supplied);
@@ -25660,6 +26991,7 @@ function MCPV5Create_character_continuity() {
         .forEach(character => matches.push({ key: "npc:" + character.key, name: character.name }));
       return matches.length === 1 ? matches[0] : null;
     }
+
     function parseNameUse(value) {
       const raw = line(value, 2000);
       if (!raw) return { safe: false, raw, normalized: raw, reason: "missing Use permission" };
@@ -25679,6 +27011,7 @@ function MCPV5Create_character_continuity() {
       const normalized = uniquePermissions.map(permission => permission.name).join(", ");
       return { safe: true, raw, normalized, permissions: uniquePermissions, corrected: raw !== normalized };
     }
+
     function parseNameProgress(value) {
       const raw = line(value, 2000);
       if (!raw) return { safe: true, raw: "", normalized: "", progress: [], corrected: false };
@@ -25703,6 +27036,7 @@ function MCPV5Create_character_continuity() {
       const normalized = progress.map(item => item.name + " " + item.count + "/" + threshold).join("; ");
       return { safe: true, raw, normalized, progress, corrected: raw !== normalized };
     }
+
     function renderNameRecord(record) {
       const values = record && record.values || {};
       return [
@@ -25713,6 +27047,7 @@ function MCPV5Create_character_continuity() {
         "Reason: " + textOf(values.Reason || "")
       ].join("\n");
     }
+
     function renderNamesPage(identity, page, items) {
       const rows = ["{", namePageHeader(identity), "Canonical: " + identity.canonical];
       (Array.isArray(items) ? items : []).forEach((item, index) => {
@@ -25722,9 +27057,11 @@ function MCPV5Create_character_continuity() {
       rows.push("}");
       return rows.join("\n");
     }
+
     function emptyNamesEntry(identity, page) {
       return renderNamesPage(identity, page, []);
     }
+
     function parseNameRecord(identity, raw, page, card, startLine) {
       const rows = textOf(raw).replace(/\r/g, "").split("\n").filter(row => row.trim());
       if (rows.length !== 5) {
@@ -25781,6 +27118,7 @@ function MCPV5Create_character_continuity() {
         duplicate: false, conflict: false, oversize: false, writable: true
       };
     }
+
     function parseNamesPage(identity, card, page) {
       const source = entryOf(card).replace(/\r/g, "");
       const envelope = onboardingPageEnvelope(source, namePageHeader(identity));
@@ -25825,17 +27163,21 @@ function MCPV5Create_character_continuity() {
         safe: pageSafe, duplicatePage: false, chars: source.length
       };
     }
+
     function namePageCards(identity) {
       return catalogPagedCards(identity.titleBase, settings.NAMES_LABEL);
     }
+
     function ensureBaseNamesCard(identity) {
       const existing = namePageCards(identity).find(item => item.page === 1);
       return existing ? existing.card : addCard(namePageTitle(identity, 1), emptyNamesEntry(identity, 1));
     }
+
     function nameRecordSignature(record) {
       return [record.values.Status, record.values.Use, record.values.Progress, record.values.Reason]
         .map(value => textOf(value).replace(/\s+/g, " ").trim()).join("\u241f");
     }
+
     function markNameDuplicates(pages, diagnostics, identity) {
       const groups = {};
       pages.forEach(page => page.records.forEach(record => {
@@ -25859,7 +27201,9 @@ function MCPV5Create_character_continuity() {
         }
       });
     }
+
     let namesStore = null;
+
     function refreshNamesStore() {
       if (storeIsFresh("names", namesStore)) return namesStore;
       const session = storeSessionFor("names");
@@ -25916,18 +27260,22 @@ function MCPV5Create_character_continuity() {
       recordStoreParse("names", writesAtStart);
       return verifiedStoreAfterParse("names", store, refreshNamesStore);
     }
+
     function namesForIdentity(identityKey) {
       return namesStore && namesStore.identities ? namesStore.identities[identityKey] || null : null;
     }
+
     function managedNamesRecords() {
       return orderedUniqueOwnedCatalogRecords(nameIdentities.flatMap(identity =>
         catalogPagedCards(identity.titleBase, settings.NAMES_LABEL)
           .map(item => ({ card: item.card, ownerKey: identity.key }))
       ));
     }
+
     function managedNamesCards() {
       return managedNamesRecords().map(record => record.card);
     }
+
     function managedNamesSnapshotOwnerKey(item) {
       const parts = numberedNamedTitleParts(item && item.title, settings.NAMES_LABEL);
       const identity = parts
@@ -25935,9 +27283,11 @@ function MCPV5Create_character_continuity() {
         : null;
       return identity ? identity.key : "";
     }
+
     function captureManagedNamesCards() {
       return captureOwnedManagedCards(managedNamesRecords());
     }
+
     function restoreManagedNamesCards(snapshot) {
       if (!Array.isArray(snapshot)) return false;
       const restored = restoreOwnedManagedCards(
@@ -25949,6 +27299,7 @@ function MCPV5Create_character_continuity() {
       applyManagedNameForms();
       return restored;
     }
+
     function copyNameItem(item) {
       if (!item || item.kind !== "record") return { ...item };
       return {
@@ -25960,6 +27311,7 @@ function MCPV5Create_character_continuity() {
         fieldUnsafe: { ...item.fieldUnsafe }
       };
     }
+
     function plannedNamesPages(identityData) {
       return identityData.pages.map(page => ({
         card: page.card, page: page.page, title: page.title,
@@ -25970,9 +27322,11 @@ function MCPV5Create_character_continuity() {
         items: page.items.map(copyNameItem)
       }));
     }
+
     function nextNamesPageNumber(pages) {
       return Math.max(0, ...(Array.isArray(pages) ? pages.map(page => page.page) : [])) + 1;
     }
+
     function createPlannedNamesPage(identity, pages) {
       const pageNumber = nextNamesPageNumber(pages);
       const page = {
@@ -25983,9 +27337,11 @@ function MCPV5Create_character_continuity() {
       pages.sort((left, right) => left.page - right.page);
       return page;
     }
+
     function plannedNamesPageFits(identity, page, items) {
       return renderNamesPage(identity, page.page, items).length <= settings.MAX_NAMES_CARD_CHARS;
     }
+
     function reparsePlannedNameRecord(identity, record) {
       const parsed = parseNameRecord(identity, renderNameRecord(record), record.page, record.card, record.line || 0);
       if (parsed.kind !== "record") return false;
@@ -25993,6 +27349,7 @@ function MCPV5Create_character_continuity() {
       Object.assign(record, parsed, location);
       return true;
     }
+
     function plannedNameAlias(pages, alias) {
       const aliasKey = nameKeyOf(alias);
       const matches = pages.flatMap(page => page.items
@@ -26008,6 +27365,7 @@ function MCPV5Create_character_continuity() {
       }
       return { ok: true, found };
     }
+
     function removePlannedNameItem(page, item) {
       const index = page && page.items ? page.items.indexOf(item) : -1;
       if (index < 0) return false;
@@ -26015,6 +27373,7 @@ function MCPV5Create_character_continuity() {
       page.dirty = true;
       return true;
     }
+
     function repackPlannedNames(identity, pages) {
       const movablePages = pages.filter(page => page.movable && !page.remove).sort((left, right) => left.page - right.page);
       const items = movablePages.flatMap(page => page.items.map(item => ({
@@ -26045,6 +27404,7 @@ function MCPV5Create_character_continuity() {
       });
       return { ok: true };
     }
+
     function commitPlannedNames(identity, pages) {
       const snapshot = captureManagedNamesCards();
       try {
@@ -26083,6 +27443,7 @@ function MCPV5Create_character_continuity() {
       applyManagedNameForms();
       return { ok: true };
     }
+
     function transactNames(identity, operation) {
       refreshNamesStore();
       const identityData = namesForIdentity(identity.key);
@@ -26095,6 +27456,7 @@ function MCPV5Create_character_continuity() {
       const committed = commitPlannedNames(identity, pages);
       return committed.ok ? result : committed;
     }
+
     function baseNameRecord(identity, alias, status, use, progress, reason) {
       const record = {
         kind: "record", alias: line(alias, 160), aliasKey: nameKeyOf(alias),
@@ -26109,6 +27471,7 @@ function MCPV5Create_character_continuity() {
       };
       return reparsePlannedNameRecord(identity, record) ? record : null;
     }
+
     function repairNamesStore() {
       refreshNamesStore();
       const session = storeSessionFor("names");
@@ -26162,6 +27525,7 @@ function MCPV5Create_character_continuity() {
       applyManagedNameForms();
       if (session) session.repaired = true;
     }
+
     function applyManagedNameForms() {
       const session = storeSessionFor("names");
       if (session && session.projected && storeIsFresh("names", namesStore)) return;
@@ -26183,6 +27547,7 @@ function MCPV5Create_character_continuity() {
       });
       if (session) session.projected = true;
     }
+
     function identityReferenceMatches(value, includeEmerging) {
       const supplied = line(value, 160);
       if (!supplied) return [];
@@ -26194,18 +27559,23 @@ function MCPV5Create_character_continuity() {
         return forms.some(form => sameNameForm(form, supplied));
       });
     }
+
     function unambiguousIdentityForm(value, includeEmerging) {
       const matches = identityReferenceMatches(value, includeEmerging);
       return matches.length === 1 ? matches[0] : null;
     }
+
     repairNamesStore();
     refreshViewsStore(true);
+
     function relationshipPageTitle(character, page) {
       return namedTitle(character.name, settings.RELATIONSHIPS_LABEL) + (page > 1 ? " " + page : "");
     }
+
     function relationshipPageHeader(character) {
       return character.name + "'s Relationships:";
     }
+
     function canonicalRelationshipTarget(owner, value) {
       const supplied = line(value, 160);
       const normalized = nameKeyOf(supplied);
@@ -26221,6 +27591,7 @@ function MCPV5Create_character_continuity() {
         ? { key: "player", name: "Player" }
         : { key: "npc:" + identity.character.key, name: identity.character.name };
     }
+
     function relationshipTargetAliases(record, owner) {
       if (!record) return [];
       if (record.targetKey === "player") return uniqueNameForms(["Player", "the player", "you", player.name].concat(player.aliases || []), 160);
@@ -26230,6 +27601,7 @@ function MCPV5Create_character_continuity() {
       }
       return [record.targetName];
     }
+
     function parseRelationshipField(field, value) {
       const raw = line(value, 4000);
       if (!raw) return { blank: true, safe: true, raw: "", normalized: "", corrected: false };
@@ -26278,12 +27650,14 @@ function MCPV5Create_character_continuity() {
         suppliedStage: line(match[2], 120)
       };
     }
+
     function canonicalRelationshipManagedValue(field, value) {
       const canonicalField = canonicalRelationshipFieldName(field);
       if (!canonicalField) return null;
       const parsed = parseRelationshipField(canonicalField, value);
       return parsed && parsed.safe ? parsed.normalized : null;
     }
+
     function relationshipManagedSignature(ownerKey, targetKey, field, value) {
       const canonicalField = canonicalRelationshipFieldName(field);
       const normalizedOwner = line(ownerKey, 160);
@@ -26299,6 +27673,7 @@ function MCPV5Create_character_continuity() {
         canonicalValue.slice(0, 240)
       ]), 500);
     }
+
     function currentRelationshipManagedSignature(ownerKey, targetKey, field) {
       const canonicalField = canonicalRelationshipFieldName(field);
       const normalizedTarget = normalizedTargetKey(targetKey);
@@ -26316,6 +27691,7 @@ function MCPV5Create_character_continuity() {
       const value = record.values ? record.values[canonicalField] : "";
       return relationshipManagedSignature(ownerKey, normalizedTarget, canonicalField, value);
     }
+
     function renderRelationshipRecord(record) {
       const values = record && record.values || {};
       return [
@@ -26323,6 +27699,7 @@ function MCPV5Create_character_continuity() {
         ...RELATIONSHIP_FIELDS.map(field => field + ": " + textOf(values[field] || ""))
       ].join("\n");
     }
+
     function renderRelationshipsPage(character, page, items) {
       const rows = ["{", relationshipPageHeader(character)];
       (Array.isArray(items) ? items : []).forEach((item, index) => {
@@ -26332,9 +27709,11 @@ function MCPV5Create_character_continuity() {
       rows.push("}");
       return rows.join("\n");
     }
+
     function emptyRelationshipsEntry(character, page) {
       return renderRelationshipsPage(character, page, []);
     }
+
     function parseRelationshipRecord(character, raw, page, card, startLine) {
       const rows = textOf(raw).replace(/\r/g, "").split("\n").filter(row => row.trim());
       if (rows.length !== 6) {
@@ -26379,6 +27758,7 @@ function MCPV5Create_character_continuity() {
         writable: true
       };
     }
+
     function parseRelationshipsPage(character, card, page) {
       const source = entryOf(card).replace(/\r/g, "");
       const envelope = onboardingPageEnvelope(source, relationshipPageHeader(character));
@@ -26455,19 +27835,23 @@ function MCPV5Create_character_continuity() {
         chars: source.length
       };
     }
+
     function relationshipPageCards(character) {
       return catalogPagedCards(character.name, settings.RELATIONSHIPS_LABEL);
     }
+
     function ensureBaseRelationshipsCard(character) {
       const existing = relationshipPageCards(character).find(item => item.page === 1);
       return existing
         ? existing.card
         : addCard(relationshipPageTitle(character, 1), emptyRelationshipsEntry(character, 1));
     }
+
     function relationshipRecordSignature(record) {
       return RELATIONSHIP_FIELDS.map(field => textOf(record && record.values && record.values[field])
         .replace(/\s+/g, " ").trim()).join("\u241f");
     }
+
     function markRelationshipDuplicates(pages, diagnostics) {
       const groups = {};
       pages.forEach(page => page.records.forEach(record => {
@@ -26492,7 +27876,9 @@ function MCPV5Create_character_continuity() {
         }
       });
     }
+
     let relationshipsStore = null;
+
     function refreshRelationshipsStore() {
       if (storeIsFresh("relationships", relationshipsStore)) return relationshipsStore;
       const session = storeSessionFor("relationships");
@@ -26558,20 +27944,24 @@ function MCPV5Create_character_continuity() {
       recordStoreParse("relationships", writesAtStart);
       return verifiedStoreAfterParse("relationships", store, refreshRelationshipsStore);
     }
+
     function relationshipsForOwner(ownerKey) {
       return relationshipsStore && relationshipsStore.owners
         ? relationshipsStore.owners[ownerKey] || null
         : null;
     }
+
     function managedRelationshipsRecords() {
       return orderedUniqueOwnedCatalogRecords(characters.flatMap(character =>
         catalogPagedCards(character.name, settings.RELATIONSHIPS_LABEL)
           .map(item => ({ card: item.card, ownerKey: character.key }))
       ));
     }
+
     function managedRelationshipsCards() {
       return managedRelationshipsRecords().map(record => record.card);
     }
+
     function managedRelationshipsSnapshotOwnerKey(item) {
       const parts = numberedNamedTitleParts(item && item.title, settings.RELATIONSHIPS_LABEL);
       const character = parts
@@ -26579,9 +27969,11 @@ function MCPV5Create_character_continuity() {
         : null;
       return character ? character.key : "";
     }
+
     function captureManagedRelationshipsCards() {
       return captureOwnedManagedCards(managedRelationshipsRecords());
     }
+
     function restoreManagedRelationshipsCards(snapshot) {
       if (!Array.isArray(snapshot)) return false;
       const restored = restoreOwnedManagedCards(
@@ -26592,6 +27984,7 @@ function MCPV5Create_character_continuity() {
       refreshRelationshipsStore();
       return restored;
     }
+
     function copyRelationshipItem(item) {
       if (!item || item.kind !== "record") return { ...item };
       return {
@@ -26604,6 +27997,7 @@ function MCPV5Create_character_continuity() {
         fieldUnsafe: { ...item.fieldUnsafe }
       };
     }
+
     function plannedRelationshipsPages(ownerData) {
       return ownerData.pages.map(page => ({
         card: page.card,
@@ -26620,9 +28014,11 @@ function MCPV5Create_character_continuity() {
         items: page.items.map(copyRelationshipItem)
       }));
     }
+
     function nextRelationshipsPageNumber(pages) {
       return Math.max(0, ...(Array.isArray(pages) ? pages.map(page => page.page) : [])) + 1;
     }
+
     function createPlannedRelationshipsPage(character, pages) {
       const pageNumber = nextRelationshipsPageNumber(pages);
       const page = {
@@ -26640,10 +28036,12 @@ function MCPV5Create_character_continuity() {
       pages.sort((left, right) => left.page - right.page);
       return page;
     }
+
     function plannedRelationshipsPageFits(character, page, items) {
       return renderRelationshipsPage(character, page.page, items).length
         <= settings.MAX_RELATIONSHIPS_CARD_CHARS;
     }
+
     function reparsePlannedRelationshipRecord(record) {
       record.parsedFields = {};
       record.fieldUnsafe = {};
@@ -26654,6 +28052,7 @@ function MCPV5Create_character_continuity() {
       });
       return record;
     }
+
     function plannedRelationshipTarget(pages, targetKey) {
       const matches = pages.flatMap(page => page.items
         .filter(item => item.kind === "record" && item.targetKey === targetKey)
@@ -26668,6 +28067,7 @@ function MCPV5Create_character_continuity() {
       }
       return { ok: true, found };
     }
+
     function removePlannedRelationshipItem(page, item) {
       const index = page && page.items ? page.items.indexOf(item) : -1;
       if (index < 0) return false;
@@ -26675,6 +28075,7 @@ function MCPV5Create_character_continuity() {
       page.dirty = true;
       return true;
     }
+
     function repackPlannedRelationships(character, pages) {
       const movablePages = pages.filter(page => page.movable && !page.remove)
         .sort((left, right) => left.page - right.page);
@@ -26707,6 +28108,7 @@ function MCPV5Create_character_continuity() {
       });
       return { ok: true };
     }
+
     function commitPlannedRelationships(character, pages) {
       const snapshot = captureManagedRelationshipsCards();
       try {
@@ -26747,6 +28149,7 @@ function MCPV5Create_character_continuity() {
       refreshRelationshipsStore();
       return { ok: true };
     }
+
     function transactRelationships(owner, operation) {
       refreshRelationshipsStore();
       const ownerData = relationshipsForOwner(owner.key);
@@ -26759,6 +28162,7 @@ function MCPV5Create_character_continuity() {
       const committed = commitPlannedRelationships(owner, pages);
       return committed.ok ? result : committed;
     }
+
     function repairRelationshipsStore() {
       refreshRelationshipsStore();
       const session = storeSessionFor("relationships");
@@ -26906,20 +28310,25 @@ function MCPV5Create_character_continuity() {
       refreshRelationshipsStore();
       if (session) session.repaired = true;
     }
+
     repairRelationshipsStore();
+
     function stateTitle(character) {
       return namedTitle(character.name, settings.STATE_LABEL);
     }
+
     function situationPhrase(value) {
       return line(value, settings.MAX_STATE_VALUE_CHARS)
         .replace(/[.!?]+$/g, "")
         .trim();
     }
+
     function experiencePhrase(value) {
       return line(value, settings.MAX_EXPERIENCE_IMPORT_CHARS)
         .replace(/[.!?]+$/g, "")
         .trim();
     }
+
     function stateEntry(character, npc) {
       const state = normalizeState(npc && npc.state, CC.stateClock);
       return [
@@ -26935,6 +28344,7 @@ function MCPV5Create_character_continuity() {
         "}"
       ].join("\n");
     }
+
     function stateTargetForName(owner, value) {
       const target = canonicalViewTarget(owner, value);
       if (!target) return { key: "", name: "" };
@@ -26943,6 +28353,7 @@ function MCPV5Create_character_continuity() {
         name: storedTargetName(target.key, target.name)
       };
     }
+
     function parseStateEntry(character, source, existing) {
       const prior = normalizeState(existing, CC.stateClock);
       const result = normalizeState(prior, CC.stateClock);
@@ -26977,6 +28388,7 @@ function MCPV5Create_character_continuity() {
       }
       return result;
     }
+
     function canonicalizeStateAboutLine(card, source, target) {
       const canonical = target && target.name;
       const supplied = extractLine(source, "About");
@@ -26996,6 +28408,7 @@ function MCPV5Create_character_continuity() {
         ? { card: saved, source: entry, changed: true }
         : { card, source, changed: false };
     }
+
     function syncStateCard(character) {
       const title = stateTitle(character);
       let card = namedCard(character.name, settings.STATE_LABEL);
@@ -27014,6 +28427,7 @@ function MCPV5Create_character_continuity() {
         CC.cardHashes[title] = hashString(source);
       }
     }
+
     function writeStateCard(character) {
       const npc = CC.npcs[character.key];
       if (!npc) return;
@@ -27024,21 +28438,27 @@ function MCPV5Create_character_continuity() {
       if (saved) CC.cardHashes[title] = hashString(entry);
       return saved;
     }
+
     function syncAllStateCards() {
       characters.filter(character => !character.onboardingPending).forEach(syncStateCard);
     }
+
     function writeAllStateCards() {
       characters.filter(character => !character.onboardingPending).forEach(writeStateCard);
       CC.cardsInitialized = true;
     }
+
     syncAllStateCards();
     if (!CC.cardsInitialized) writeAllStateCards();
+
     function experiencesPageTitle(character, page) {
       return ownedCardTitle(character.name, settings.EXPERIENCES_LABEL, page);
     }
+
     function experiencesPageHeader(character, page) {
       return experiencesPageTitle(character, page) + ":";
     }
+
     function experiencesTitleParts(title) {
       const parts = ownedCardTitleParts(title);
       if (!parts || keyOf(parts.label) !== keyOf(settings.EXPERIENCES_LABEL)) return null;
@@ -27046,6 +28466,7 @@ function MCPV5Create_character_continuity() {
       const owner = matches.length === 1 ? matches[0] : null;
       return owner ? { owner, page: parts.page } : null;
     }
+
     function catalogExperienceOwners() {
       const catalog = currentCardCatalog();
       if (catalog.experienceOwners) return catalog.experienceOwners;
@@ -27069,9 +28490,11 @@ function MCPV5Create_character_continuity() {
       catalog.experienceOwners = index;
       return index;
     }
+
     function experienceSignature(ownerKey, targetKey, situation) {
       return ownerKey + "|" + normalizedTargetKey(targetKey) + "|" + keyOf(experiencePhrase(situation));
     }
+
     function baseExperienceRecord(owner, target, situation) {
       const phrase = experiencePhrase(situation);
       const targetKey = normalizedTargetKey(target && target.key);
@@ -27087,12 +28510,14 @@ function MCPV5Create_character_continuity() {
         writable: true
       };
     }
+
     function renderExperienceRecord(owner, record) {
       return [
         "About: " + line(record.targetName, 120),
         "Experience: " + experiencePhrase(record.situation)
       ].join("\n");
     }
+
     function renderExperiencesPage(owner, page, records) {
       const rows = ["{", experiencesPageHeader(owner, page)];
       (Array.isArray(records) ? records : []).forEach((record, index) => {
@@ -27102,6 +28527,7 @@ function MCPV5Create_character_continuity() {
       rows.push("}");
       return rows.join("\n");
     }
+
     function parseExperiencesPage(owner, card, page) {
       const source = entryOf(card).replace(/\r/g, "");
       const trimmed = source.trim();
@@ -27216,7 +28642,9 @@ function MCPV5Create_character_continuity() {
         duplicatePage: false
       };
     }
+
     let experiencesStore = null;
+
     function refreshExperiencesStore(internalize) {
       const session = storeSessionFor("experiences");
       if (storeIsFresh("experiences", experiencesStore)) {
@@ -27279,25 +28707,31 @@ function MCPV5Create_character_continuity() {
         () => refreshExperiencesStore(false)
       );
     }
+
     function experiencesForOwner(ownerKey) {
       return experiencesStore && experiencesStore.owners
         ? experiencesStore.owners[ownerKey] || null
         : null;
     }
+
     function managedExperienceRecords() {
       return orderedUniqueOwnedCatalogRecords(catalogExperienceOwners().records
         .map(record => ({ card: record.card, ownerKey: record.ownerKey })));
     }
+
     function managedExperienceCards() {
       return managedExperienceRecords().map(record => record.card);
     }
+
     function managedExperienceSnapshotOwnerKey(item) {
       const parts = experiencesTitleParts(item && item.title);
       return parts && parts.owner ? parts.owner.key : "";
     }
+
     function captureManagedExperienceCards() {
       return captureOwnedManagedCards(managedExperienceRecords());
     }
+
     function restoreManagedExperienceCards(snapshot) {
       if (!Array.isArray(snapshot)) return false;
       const restored = restoreOwnedManagedCards(
@@ -27308,6 +28742,7 @@ function MCPV5Create_character_continuity() {
       refreshExperiencesStore(false);
       return restored;
     }
+
     function splitExperienceRecord(owner, record) {
       const source = experiencePhrase(record && record.situation);
       const maximum = settings.MAX_STORED_EXPERIENCE_CHARS;
@@ -27351,6 +28786,7 @@ function MCPV5Create_character_continuity() {
       }));
       return { ok: true, records };
     }
+
     function plannedExperienceMigration(ownerData) {
       const owner = ownerData && ownerData.character;
       const pages = ownerData && Array.isArray(ownerData.pages)
@@ -27426,6 +28862,7 @@ function MCPV5Create_character_continuity() {
       });
       return { ok: true, changed: true, pages: plans, splitRecords, addedChunks };
     }
+
     function commitExperienceMigration(owner, plans) {
       const snapshot = captureManagedExperienceCards();
       try {
@@ -27456,6 +28893,7 @@ function MCPV5Create_character_continuity() {
       refreshExperiencesStore(false);
       return { ok: true };
     }
+
     function repairExperiencesStore() {
       refreshExperiencesStore(true);
       const session = storeSessionFor("experiences");
@@ -27499,12 +28937,14 @@ function MCPV5Create_character_continuity() {
       refreshExperiencesStore(false);
       if (session) session.repaired = true;
     }
+
     function nextExperiencesPageNumber(pages) {
       const used = new Set((Array.isArray(pages) ? pages : []).map(page => page.page));
       let page = 1;
       while (used.has(page)) page += 1;
       return page;
     }
+
     function appendExperience(owner, target, situation) {
       refreshExperiencesStore(false);
       const ownerData = experiencesForOwner(owner.key);
@@ -27567,6 +29007,7 @@ function MCPV5Create_character_continuity() {
           + modelTargetName(record.targetKey, record.targetName)
       };
     }
+
     function experienceProvenanceForSignature(ownerKey, targetKey, signature) {
       const normalizedTarget = normalizedTargetKey(targetKey);
       return CC.provenance.records.find(record => record.kind === "experience"
@@ -27574,6 +29015,7 @@ function MCPV5Create_character_continuity() {
         && record.targetKey === normalizedTarget
         && record.signature === signature) || null;
     }
+
     function acceptedStateConfirmationsForExperience(owner, target, situation) {
       const signature = experienceSignature(owner.key, target && target.key, situation);
       const matching = activeProvenanceRecords({
@@ -27601,6 +29043,7 @@ function MCPV5Create_character_continuity() {
       }
       return selected;
     }
+
     function promoteExperienceWithProvenance(owner, target, situation, plan) {
       const signature = experienceSignature(owner.key, target && target.key, situation);
       const confirmations = acceptedStateConfirmationsForExperience(owner, target, situation);
@@ -27609,6 +29052,7 @@ function MCPV5Create_character_continuity() {
       }
       const promotion = appendExperience(owner, target, situation);
       if (!promotion.ok) return promotion;
+
       refreshProvenanceActivity();
       const existing = experienceProvenanceForSignature(owner.key, target && target.key, signature);
       if (existing) {
@@ -27631,6 +29075,7 @@ function MCPV5Create_character_continuity() {
           summary: promotion.summary
         };
       }
+
       const sourceIds = confirmations.map(record => record.id);
       const storyEvidenceIds = storyLineageForSources(sourceIds);
       const provenance = appendProvenanceRecord({
@@ -27668,6 +29113,7 @@ function MCPV5Create_character_continuity() {
         summary: promotion.summary
       };
     }
+
     function backfillExperienceProvenance() {
       refreshExperiencesStore(false);
       Object.values(experiencesStore && experiencesStore.owners || {}).forEach(ownerData => {
@@ -27716,11 +29162,14 @@ function MCPV5Create_character_continuity() {
         });
       });
     }
+
     repairExperiencesStore();
     backfillExperienceProvenance();
+
     function clearTemporaryState() {
       Object.values(CC.npcs || {}).forEach(npc => { npc.state = blankState(); });
     }
+
     function expireTemporaryState(clock) {
       let expired = 0;
       Object.values(CC.npcs || {}).forEach(npc => {
@@ -27745,6 +29194,7 @@ function MCPV5Create_character_continuity() {
       });
       return expired;
     }
+
     function resetSceneForTimeJump(preserveStateEvidenceId = "") {
       CC.sceneLastSeen = {};
       CC.activeKeys = [];
@@ -27756,15 +29206,19 @@ function MCPV5Create_character_continuity() {
       });
       CC.last.timeJumpReset = true;
     }
+
     function historyType(item) {
       return keyOf(item && item.type);
     }
+
     function historyText(item) {
       return item && typeof item === "object" ? textOf(item.text) : "";
     }
+
     function canonicalOutput(value) {
       return textOf(value).normalize("NFKC").replace(/\s+/g, " ").trim();
     }
+
     function outputAnchorFor(story, plan) {
       const canonical = canonicalOutput(story);
       if (!canonical) return null;
@@ -27778,6 +29232,7 @@ function MCPV5Create_character_continuity() {
         activeKeys: clone(plan && plan.activeKeys || [])
       };
     }
+
     function recentStoryFromContext(value) {
       const marker = "Recent Story:";
       const source = textOf(value);
@@ -27798,6 +29253,7 @@ function MCPV5Create_character_continuity() {
         .slice(-16000)
         .trim();
     }
+
     function evidenceExcerpt(value) {
       const maximum = settings.MAX_EVIDENCE_ITEM_CHARS;
       const source = canonicalOutput(value);
@@ -27815,6 +29271,7 @@ function MCPV5Create_character_continuity() {
       const text = (left.trimEnd() + marker + right.trimStart()).slice(0, maximum);
       return { text, clipped: true, originalChars: source.length };
     }
+
     function evidenceAnchor(value) {
       const canonical = canonicalOutput(value);
       if (!canonical) return null;
@@ -27826,6 +29283,7 @@ function MCPV5Create_character_continuity() {
         chars: canonical.length
       };
     }
+
     function anchorInText(anchor, value) {
       if (!anchor) return false;
       const canonical = canonicalOutput(value);
@@ -27833,6 +29291,7 @@ function MCPV5Create_character_continuity() {
       return hashString(canonical) === anchor.hash
         || (!!anchor.start && !!anchor.end && canonical.includes(anchor.start) && canonical.includes(anchor.end));
     }
+
     function normalizeEvidenceItem(item) {
       const source = item && typeof item === "object" && !Array.isArray(item) ? item : {};
       return {
@@ -27855,9 +29314,11 @@ function MCPV5Create_character_continuity() {
         anchor: source.anchor && typeof source.anchor === "object" && !Array.isArray(source.anchor) ? source.anchor : null
       };
     }
+
     CC.evidence = CC.evidence.map(normalizeEvidenceItem).filter(item => item.id && item.text);
     const highestEvidenceNumber = Math.max(0, ...CC.evidence.map(item => item.number));
     CC.nextEvidenceNumber = Math.max(CC.nextEvidenceNumber, highestEvidenceNumber + 1);
+
     function addEvidence(source, value) {
       const excerpt = evidenceExcerpt(value);
       if (!excerpt.text) return null;
@@ -27895,17 +29356,21 @@ function MCPV5Create_character_continuity() {
       ).slice(-20);
       return item;
     }
+
     function evidenceForId(id) {
       return CC.evidence.find(item => item.id === textOf(id).toUpperCase()) || null;
     }
+
     function openingEvidenceEligible(item, recent) {
       return item.source !== "opening" || anchorInText(item.anchor, recent);
     }
+
     function stateEvidenceEligible(item, owner, recent) {
       if (!item || !owner || !openingEvidenceEligible(item, recent)) return false;
       if (item.usedStateBy[owner.key]) return false;
       return CC.stateClock - item.stateClock < runtime.stateLifetime;
     }
+
     function viewEvidenceAge(item, owner, opportunityOverride = null) {
       const now = opportunityOverride === null
         ? Math.max(0, Number(CC.ownerOpportunities[owner.key]) || 0)
@@ -27913,6 +29378,7 @@ function MCPV5Create_character_continuity() {
       const born = Math.max(0, Number(item.ownerBirth[owner.key]) || 0);
       return Math.max(0, now - born);
     }
+
     function viewEvidenceEligible(item, owner, recent, targetKey, opportunityOverride) {
       if (!item || !owner || !openingEvidenceEligible(item, recent)) return false;
       if (viewEvidenceAge(item, owner, opportunityOverride) >= settings.VIEW_EVIDENCE_OPPORTUNITIES) return false;
@@ -27920,6 +29386,7 @@ function MCPV5Create_character_continuity() {
       const ownerUses = item.usedViewsBy[owner.key];
       return !(ownerUses && ownerUses[targetKey]);
     }
+
     function relationshipEvidenceEligible(item, owner, recent, targetKey, opportunityOverride) {
       if (!item || !owner || !openingEvidenceEligible(item, recent)) return false;
       if (viewEvidenceAge(item, owner, opportunityOverride) >= settings.RELATIONSHIP_EVIDENCE_OPPORTUNITIES) return false;
@@ -27927,6 +29394,7 @@ function MCPV5Create_character_continuity() {
       const ownerUses = item.usedRelationshipsBy[owner.key];
       return !(ownerUses && ownerUses[targetKey]);
     }
+
     function nameEvidenceEligible(item, owner, recent, subjectKey, aliasKey, opportunityOverride) {
       if (!item || !owner || !openingEvidenceEligible(item, recent)) return false;
       if (viewEvidenceAge(item, owner, opportunityOverride) >= settings.NAME_EVIDENCE_OPPORTUNITIES) return false;
@@ -27934,11 +29402,15 @@ function MCPV5Create_character_continuity() {
       const subjectUses = item.usedNamesBy[subjectKey];
       return !(subjectUses && subjectUses[aliasKey]);
     }
+
     function consumeStateEvidence(items, owner) {
       items.forEach(item => { item.usedStateBy[owner.key] = true; });
     }
+
     function consumeViewEvidence(items, owner, targetKey) {
       (Array.isArray(items) ? items : []).forEach(item => {
+        // Raw E# evidence keeps the existing owner-target consumption rule. R#/X#
+        // interpretations remain uncommitted until the later V# transaction slice.
         if (!item || item.source === "provenance" || !/^E\d+$/.test(textOf(item.id))) return;
         if (!item.usedViewsBy || typeof item.usedViewsBy !== "object") item.usedViewsBy = {};
         if (!item.usedViewsBy[owner.key] || typeof item.usedViewsBy[owner.key] !== "object") {
@@ -27947,8 +29419,11 @@ function MCPV5Create_character_continuity() {
         item.usedViewsBy[owner.key][targetKey] = true;
       });
     }
+
     function consumeRelationshipEvidence(items, owner, targetKey) {
       (Array.isArray(items) ? items : []).forEach(item => {
+        // Raw E# evidence is consumed only after the full Relationship, R#, and
+        // derived narrow-use transaction succeeds. S#/X# use is stored on provenance.
         if (!item || item.source === "provenance" || !/^E\d+$/.test(textOf(item.id))) return;
         if (!item.usedRelationshipsBy || typeof item.usedRelationshipsBy !== "object") item.usedRelationshipsBy = {};
         if (!item.usedRelationshipsBy[owner.key] || typeof item.usedRelationshipsBy[owner.key] !== "object") {
@@ -27957,6 +29432,7 @@ function MCPV5Create_character_continuity() {
         item.usedRelationshipsBy[owner.key][targetKey] = true;
       });
     }
+
     function consumeNameEvidence(items, subjectKey, aliasKey) {
       items.forEach(item => {
         if (!item.usedNamesBy[subjectKey] || typeof item.usedNamesBy[subjectKey] !== "object") {
@@ -27965,12 +29441,14 @@ function MCPV5Create_character_continuity() {
         item.usedNamesBy[subjectKey][aliasKey] = true;
       });
     }
+
     function modelEvidenceText(item, currentInputId, recent) {
       if (item.id === currentInputId) return "See the current player input in Recent Story.";
       if (item.source === "opening" && anchorInText(item.anchor, recent)) return "See the opening prompt in Recent Story.";
       if (item.source === "story" && anchorInText(item.anchor, recent)) return "See the matching completed generated story in Recent Story.";
       return item.text.replace(/\{/g, "⦃").replace(/\}/g, "⦄");
     }
+
     function outputAnchorPresent(contextValue) {
       const anchor = CC.lastVisibleOutputAnchor;
       if (!anchor || !anchor.text) return true;
@@ -27986,20 +29464,24 @@ function MCPV5Create_character_continuity() {
         return canonical && (canonical.includes(anchor.text) || hashString(canonical) === anchor.hash);
       });
     }
+
     function hasOpeningHistoryShape(inputValue) {
       const actions = historyList.filter(item => item && typeof item === "object" && !Array.isArray(item));
       if (!actions.length) return true;
       if (actions.length > 1 || historyType(actions[0]) !== "start") return false;
       return !inputValue || keyOf(historyText(actions[0])) === keyOf(inputValue);
     }
+
     function isOpeningInput(inputValue) {
       return !CC.openingSeen && CC.inputCount === 0 && CC.visibleGenerationCount === 0 && hasOpeningHistoryShape(inputValue);
     }
+
     function hasCompleteStory(value) {
       const source = clean(value, 20000);
       const words = source.split(/\s+/).filter(token => /[A-Za-z0-9\u00C0-\u024F]/.test(token));
       return words.length >= 1 && /[.!?…]["'’”)*_`\]}]*$/.test(source);
     }
+
     function aliasMentioned(source, alias) {
       const normalized = value => textOf(value).normalize("NFKC")
         .replace(/[‘’‛]/g, "'")
@@ -28009,15 +29491,18 @@ function MCPV5Create_character_continuity() {
       const pattern = wanted.split(/\s+/).map(escapeRegExp).join("\\s+");
       return new RegExp("(^|[^A-Za-z0-9])" + pattern + "(?=$|[^A-Za-z0-9])", "i").test(normalized(source));
     }
+
     function castFor(character) {
       if (!character) return blankCast("side");
       if (!CC.npcs[character.key]) CC.npcs[character.key] = blankNpc(character.startingStatus);
       CC.npcs[character.key].cast = normalizeCast(CC.npcs[character.key].cast, character.startingStatus);
       return CC.npcs[character.key].cast;
     }
+
     function currentCastStatus(character) {
       return castFor(character).status;
     }
+
     function identityForms(identity, includeEmerging) {
       if (!identity) return [];
       if (identity.player) {
@@ -28027,6 +29512,7 @@ function MCPV5Create_character_continuity() {
       return uniqueNameForms((identity.character.aliases || [identity.canonical])
         .concat(includeEmerging ? identity.character.emergingAliases || [] : []), 160);
     }
+
     function identityMentioned(source, identity, includeEmerging, sceneKeys) {
       const scene = new Set(Array.isArray(sceneKeys) ? sceneKeys : (CC.activeKeys || []));
       return identityForms(identity, includeEmerging).some(form => {
@@ -28041,10 +29527,12 @@ function MCPV5Create_character_continuity() {
         return false;
       });
     }
+
     function characterMentioned(source, character, includeEmerging, sceneKeys) {
       const identity = nameIdentityForKey("npc:" + character.key);
       return identity ? identityMentioned(source, identity, includeEmerging, sceneKeys) : false;
     }
+
     function activeCandidates(source, currentInput) {
       const recentTail = textOf(source).slice(-3500);
       return activeNpcRosterCharacters().map(character => {
@@ -28060,6 +29548,7 @@ function MCPV5Create_character_continuity() {
         };
       }).filter(item => item.eligible);
     }
+
     function preserveCastProgressForRetry() {
       if (!CC.preGenerationSnapshot || typeof CC.preGenerationSnapshot !== "object") return;
       if (!CC.preGenerationSnapshot.npcs || typeof CC.preGenerationSnapshot.npcs !== "object") {
@@ -28072,6 +29561,7 @@ function MCPV5Create_character_continuity() {
         CC.preGenerationSnapshot.npcs[character.key].cast = clone(castFor(character));
       });
     }
+
     function updateDynamicCast(candidateRows, currentInput, plan) {
       if (!plan || plan.castProgressApplied) return;
       plan.castProgressApplied = true;
@@ -28080,6 +29570,7 @@ function MCPV5Create_character_continuity() {
         return;
       }
       if (plan.kind !== "input" || !plan.genuine) return;
+
       const rosterCharacters = activeNpcRosterCharacters();
       const presentKeys = new Set(candidateRows.map(item => item.character.key));
       const interactionKeys = new Set(rosterCharacters.filter(character =>
@@ -28088,6 +29579,7 @@ function MCPV5Create_character_continuity() {
       if (!interactionKeys.size && CC.conversationKey && presentKeys.has(CC.conversationKey)) {
         interactionKeys.add(CC.conversationKey);
       }
+
       const updates = [];
       rosterCharacters.forEach(character => {
         const cast = castFor(character);
@@ -28109,6 +29601,7 @@ function MCPV5Create_character_continuity() {
           }
           return;
         }
+
         cast.inactiveStreak = 0;
         if (!interactionKeys.has(character.key)) return;
         cast.interactionProgress += 1;
@@ -28124,6 +29617,7 @@ function MCPV5Create_character_continuity() {
       CC.last.cast = updates.join("; ") || "None";
       preserveCastProgressForRetry();
     }
+
     function selectActive(source, currentInput, plan) {
       const candidates = activeCandidates(source, currentInput);
       updateDynamicCast(candidates, currentInput, plan);
@@ -28135,6 +29629,7 @@ function MCPV5Create_character_continuity() {
         .slice(0, runtime.maxActive)
         .map(item => item.character);
     }
+
     function interactionScore(character, currentInput) {
       const source = textOf(currentInput);
       if (!characterMentioned(source, character, false, CC.activeKeys)) return 0;
@@ -28152,6 +29647,7 @@ function MCPV5Create_character_continuity() {
       });
       return score;
     }
+
     function selectFocus(active, currentInput) {
       if (!active.length) return null;
       const scored = active.map(character => ({ character, score: interactionScore(character, currentInput) }));
@@ -28172,10 +29668,12 @@ function MCPV5Create_character_continuity() {
           || active.indexOf(left.character) - active.indexOf(right.character);
       })[0].character;
     }
+
     function subjectPronoun(character) {
       const raw = line(character && Array.isArray(character.pronouns) ? character.pronouns[0] : "", 120);
       return keyOf(raw.split(/[\/\s]+/).filter(Boolean)[0] || "");
     }
+
     function resolveActiveSubjectPronoun(value, active) {
       const wanted = keyOf(value);
       const matches = wanted
@@ -28187,6 +29685,7 @@ function MCPV5Create_character_continuity() {
         character: matches.length === 1 ? matches[0] : null
       };
     }
+
     function inferredConversationSpeaker(story, active) {
       const source = textOf(story);
       const speechVerb = "(?:says?|asks?|answers?|replies?|responds?|adds?|calls?|murmurs?|whispers?|repeats?|remarks?|continues?)";
@@ -28208,6 +29707,7 @@ function MCPV5Create_character_continuity() {
           }
         });
       }));
+
       let pronounAttribution = null;
       const pronounToken = "([A-Za-z\\u00C0-\\u024F][A-Za-z0-9_\\u00C0-\\u024F'’.-]*)";
       const modifier = "(?:(?:quietly|softly|gently|dryly|warmly|coldly|carefully|hesitantly|firmly|flatly|simply|finally|then|also|just|still|now|immediately|eventually)[ \\t]+){0,2}";
@@ -28236,10 +29736,12 @@ function MCPV5Create_character_continuity() {
           index: quoteMatch.index
         };
       }
+
       const attributed = [direct, pronounAttribution]
         .filter(Boolean)
         .sort((left, right) => right.index - left.index)[0] || null;
       if (attributed) return attributed.ambiguous ? null : attributed.character;
+
       const quoteStarts = [];
       let straightOpen = true;
       for (let index = 0; index < source.length; index++) {
@@ -28279,12 +29781,14 @@ function MCPV5Create_character_continuity() {
       const portrayed = active.filter(character => characterMentioned(source, character, false, active.map(item => item.key)));
       return portrayed.length === 1 ? portrayed[0] : null;
     }
+
     function updateScenePresence(story, focusKey, generation) {
       characters.forEach(character => {
         if (characterMentioned(story, character, false, CC.activeKeys)) CC.sceneLastSeen[character.key] = generation;
       });
       if (focusKey) CC.sceneLastSeen[focusKey] = generation;
     }
+
     function captureSnapshot() {
       return clone({
         npcs: CC.npcs,
@@ -28324,6 +29828,7 @@ function MCPV5Create_character_continuity() {
         managedExperienceCards: captureManagedExperienceCards()
       });
     }
+
     function restoreSnapshot(snapshot) {
       if (!snapshot || typeof snapshot !== "object") return false;
       [
@@ -28390,10 +29895,12 @@ function MCPV5Create_character_continuity() {
       });
       return cardsRestored;
     }
+
     function restoreDiscardedGeneration() {
       restoreSnapshot(CC.preGenerationSnapshot);
       CC.lastVisibleOutputAnchor = null;
     }
+
     function frozenOperationSelectionFrom(plan) {
       const source = plan && typeof plan === "object" && !Array.isArray(plan) ? plan : {};
       if (source.operationSelectionFrozen !== true) return {};
@@ -28410,6 +29917,7 @@ function MCPV5Create_character_continuity() {
         operationTieBreak: line(source.operationTieBreak, 500)
       };
     }
+
     function beginInput(inputValue) {
       const discardedPlan = CC.currentPlan && typeof CC.currentPlan === "object" ? clone(CC.currentPlan) : null;
       const sameInput = keyOf(clean(inputValue, 5000)) === keyOf(CC.lastInput);
@@ -28419,6 +29927,7 @@ function MCPV5Create_character_continuity() {
       );
       const retry = replacedOutput && sameInput;
       if (replacedOutput) restoreDiscardedGeneration();
+
       const opening = retry ? !!(discardedPlan && discardedPlan.opening) : isOpeningInput(inputValue);
       CC.lastInput = clean(inputValue, 5000);
       CC.last.retry = retry;
@@ -28430,6 +29939,7 @@ function MCPV5Create_character_continuity() {
         CC.last.update = "None";
         CC.last.output = "Retry restored the pre-generation snapshot, including provenance, operation meters, drains, Names, Relationships, and consumed evidence.";
       }
+
       if (opening) {
         let openingEvidence = retry && discardedPlan ? evidenceForId(discardedPlan.openingEvidenceId) : null;
         if (!retry) {
@@ -28448,6 +29958,7 @@ function MCPV5Create_character_continuity() {
         CC.last.context = "Opening automatic generation detected; its model output will be suppressed.";
         return;
       }
+
       let inputEvidence = retry && discardedPlan ? evidenceForId(discardedPlan.inputEvidenceId) : null;
       if (!retry) {
         CC.inputCount += 1;
@@ -28476,6 +29987,7 @@ function MCPV5Create_character_continuity() {
         ? "Retry restored the prior turn position and reused its operation opportunity."
         : "Portrayal input and one fixed-owner operation opportunity are ready.";
     }
+
     function beginContinueIfNeeded(contextValue) {
       if (CC.currentPlan && !CC.currentPlan.completed) return CC.currentPlan;
       const discardedPlan = CC.currentPlan && typeof CC.currentPlan === "object" ? clone(CC.currentPlan) : null;
@@ -28514,19 +30026,23 @@ function MCPV5Create_character_continuity() {
       CC.last.continue = true;
       return CC.currentPlan;
     }
+
     function outerAnchor(character) {
       return clean(character && character.outer
         ? character.outer
         : ["{", character.name + "'s Outer:", "}"].join("\n"), 20000);
     }
+
     function innerAnchor(character) {
       const inner = clean(character && character.inner ? character.inner : "", 20000);
       return inner ? inner + "\nEach choice follows " + character.name + "'s Principles." : "";
     }
+
     function compactOperationField(source, label, maximum) {
       const value = extractLine(source, label);
       return value ? label + ": " + shortenProfileValue(value, maximum) : "";
     }
+
     function compactOperationOuterAnchor(character) {
       const source = character && character.outer ? character.outer : "";
       const rows = [
@@ -28539,6 +30055,7 @@ function MCPV5Create_character_continuity() {
         ? ["{", character.name + "'s compact Outer:", ...rows, "}"].join("\n")
         : "";
     }
+
     function compactOperationInnerAnchor(character) {
       const source = character && character.inner ? character.inner : "";
       const rows = [
@@ -28558,6 +30075,7 @@ function MCPV5Create_character_continuity() {
         "Each choice follows " + character.name + "'s Principles."
       ].join("\n");
     }
+
     function temporaryStateLine(character) {
       const state = normalizeState(CC.npcs[character.key] && CC.npcs[character.key].state, CC.stateClock);
       const parts = [];
@@ -28572,10 +30090,12 @@ function MCPV5Create_character_continuity() {
         ? ["{", character.name + "'s current private State:", ...parts, "}"].join("\n")
         : "";
     }
+
     const EXPERIENCE_STOP_WORDS = new Set([
       "about", "after", "again", "against", "being", "during", "from", "getting", "having",
       "into", "their", "there", "these", "they", "this", "through", "under", "with"
     ]);
+
     function experienceStem(value) {
       const word = keyOf(value).replace(/\s+/g, "");
       if (word.length <= 4) return word;
@@ -28587,6 +30107,7 @@ function MCPV5Create_character_continuity() {
       if (word.endsWith("s")) return word.slice(0, -1);
       return word;
     }
+
     function experienceSituationMentioned(record, source) {
       const haystack = keyOf(source);
       const phrase = keyOf(record && record.situation);
@@ -28601,10 +30122,12 @@ function MCPV5Create_character_continuity() {
       const matches = terms.filter(word => haystackTerms.has(word)).length;
       return matches >= Math.min(2, terms.length);
     }
+
     function experienceMentioned(record, owner, source) {
       return targetReferenceMentioned(record, owner, source)
         || experienceSituationMentioned(record, source);
     }
+
     function relevantExperienceRecords(owner, currentInput, recent, evidenceCandidates) {
       const ownerData = experiencesForOwner(owner.key);
       const records = ownerData ? ownerData.contextRecords : [];
@@ -28633,6 +30156,7 @@ function MCPV5Create_character_continuity() {
       }).filter(item => item.score > 0)
         .sort((left, right) => right.score - left.score || left.record.page - right.record.page || left.record.line - right.record.line);
     }
+
     function renderRelevantExperienceBlock(owner, selection) {
       const record = selection && (selection.record || selection);
       if (!record) return "";
@@ -28647,12 +30171,15 @@ function MCPV5Create_character_continuity() {
         "}"
       ].join("\n");
     }
+
     function recoveringViewKey(ownerKey, targetKey) {
       return ownerKey + "|" + targetKey;
     }
+
     function recoveringMarker(ownerKey, targetKey) {
       return CC.recoveringViews[recoveringViewKey(ownerKey, targetKey)] || null;
     }
+
     function availableEvidence(owner, recent, currentInputId = "", frozenIds = [], opportunityOverride = null, frozenEligibility = null) {
       const frozen = Array.isArray(frozenIds) && frozenIds.length ? new Set(frozenIds) : null;
       const order = frozen ? new Map(frozenIds.map((id, index) => [id, index])) : null;
@@ -28688,6 +30215,7 @@ function MCPV5Create_character_continuity() {
           return right.item.number - left.item.number;
         });
     }
+
     function targetReferenceMentioned(record, owner, source) {
       if (!record) return false;
       if (record.targetKey === "self") {
@@ -28706,9 +30234,11 @@ function MCPV5Create_character_continuity() {
       }
       return viewTargetAliases(record, owner).some(alias => aliasMentioned(source, alias));
     }
+
     function recordMentioned(record, owner, source) {
       return targetReferenceMentioned(record, owner, source);
     }
+
     function stateViewTargetKey(character) {
       const state = normalizeState(CC.npcs[character.key] && CC.npcs[character.key].state, CC.stateClock);
       if (state.target.key === "self" || state.target.key === "player") return state.target.key;
@@ -28717,6 +30247,7 @@ function MCPV5Create_character_continuity() {
       const npc = direct || (identity && identity.character ? identity.character : null);
       return npc ? "npc:" + npc.key : (state.target.name ? "target:" + keyOf(state.target.name) : "");
     }
+
     function relevantViewRecords(owner, active, currentInput, recent, evidenceCandidates, buried) {
       const ownerData = viewsForOwner(owner.key);
       const records = ownerData ? (buried ? ownerData.buriedRecords : ownerData.activeRecords) : [];
@@ -28739,12 +30270,15 @@ function MCPV5Create_character_continuity() {
       }).filter(item => item.score > 0)
         .sort((left, right) => right.score - left.score || left.record.page - right.record.page || left.record.line - right.record.line);
     }
+
     function modelViewTargetName(record) {
       return record.targetKey === "player" ? player.name : record.targetName;
     }
+
     function safeModelViewText(value) {
       return line(value, 2000).replace(/\{/g, "⦃").replace(/\}/g, "⦄");
     }
+
     function renderRelevantViewsBlock(owner, selections) {
       const records = (Array.isArray(selections) ? selections : []).map(item => item.record || item);
       if (!records.length) return "";
@@ -28760,6 +30294,7 @@ function MCPV5Create_character_continuity() {
       rows.push("}");
       return rows.join("\n");
     }
+
     function relevantRecoveredBlocks(owner, activeSelections, buriedSelections) {
       const activeByTarget = {};
       const buriedByTarget = {};
@@ -28783,13 +30318,16 @@ function MCPV5Create_character_continuity() {
         };
       }).filter(Boolean);
     }
+
     function nameRecordMentioned(record, source) {
       return !!(record && aliasMentioned(source, record.alias));
     }
+
     function nameUseModelText(record) {
       const permissions = record && record.use && record.use.permissions || [];
       return permissions.map(permission => permission.name).join(", ") || textOf(record && record.values && record.values.Use);
     }
+
     function relevantNameRecords(identity, currentInput, recent, active) {
       const identityData = namesForIdentity(identity.key);
       const records = identityData ? identityData.contextRecords : [];
@@ -28811,6 +30349,7 @@ function MCPV5Create_character_continuity() {
         .sort((left, right) => right.score - left.score
           || left.record.page - right.record.page || left.record.line - right.record.line);
     }
+
     function renderRelevantNamesBlock(identity, selections) {
       const records = (Array.isArray(selections) ? selections : []).map(item => item.record || item).filter(Boolean);
       if (!records.length) return "";
@@ -28825,12 +30364,15 @@ function MCPV5Create_character_continuity() {
       rows.push("}");
       return rows.join("\n");
     }
+
     function relationshipRecordMentioned(record, owner, source) {
       return targetReferenceMentioned(record, owner, source);
     }
+
     function modelRelationshipTargetName(record) {
       return record.targetKey === "player" ? player.name : record.targetName;
     }
+
     function modelRelationshipFields(record) {
       const result = [];
       RELATIONSHIP_FIELDS.forEach(field => {
@@ -28844,6 +30386,7 @@ function MCPV5Create_character_continuity() {
       });
       return result;
     }
+
     function relevantRelationshipRecords(owner, active, currentInput, recent) {
       const ownerData = relationshipsForOwner(owner.key);
       const records = ownerData ? ownerData.contextRecords : [];
@@ -28878,6 +30421,7 @@ function MCPV5Create_character_continuity() {
           || left.record.page - right.record.page
           || left.record.line - right.record.line);
     }
+
     function renderRelevantRelationshipsBlock(owner, selections) {
       const chosen = (Array.isArray(selections) ? selections : []).map(item => ({
         record: item.record || item,
@@ -28893,6 +30437,7 @@ function MCPV5Create_character_continuity() {
       rows.push("}");
       return rows.join("\n");
     }
+
     function operationTargetMap(owner, active, activeSelections, buriedSelections, relationshipSelections, currentInput, evidenceCandidates, recent) {
       const result = [];
       const usedKeys = new Set();
@@ -28914,6 +30459,7 @@ function MCPV5Create_character_continuity() {
       const targetSource = [currentInput, textOf(recent).slice(-2500)]
         .concat(evidenceCandidates.map(candidate => candidate.item.text))
         .join("\n");
+
       const special = [
         { code: "S", key: "self", name: "Self", mode: "known", relationship: false, nameSubject: true },
         { code: "P", key: "player", name: player.name, mode: "known", relationship: true, nameSubject: true }
@@ -28933,6 +30479,7 @@ function MCPV5Create_character_continuity() {
           key: target.key, name: target.name, mode: "recovering", relationship: false, nameSubject: false
         });
       });
+
       activeNpcRosterCharacterSlots(false).forEach(slot => {
         const character = slot.character;
         if (character.key === owner.key) return;
@@ -28948,6 +30495,7 @@ function MCPV5Create_character_continuity() {
           key: targetKey, name: character.name, mode: "recovering", relationship: false, nameSubject: false
         });
       });
+
       let viewNumber = 1;
       activeSelections.forEach(item => {
         const record = item.record;
@@ -28957,6 +30505,7 @@ function MCPV5Create_character_continuity() {
           ? { code: "R" + (result.filter(target => target.code.startsWith("R")).length + 1), key: record.targetKey, name: modelViewTargetName(record), mode: "recovering", relationship: false, nameSubject: false }
           : { code: "V" + viewNumber++, key: record.targetKey, name: modelViewTargetName(record), mode: "active", relationship: false, nameSubject: false });
       });
+
       let buriedNumber = 1;
       buriedSelections.forEach(item => {
         const record = item.record;
@@ -28965,10 +30514,13 @@ function MCPV5Create_character_continuity() {
       });
       return result;
     }
+
+
     function operationKindLabel(kind) {
       const normalized = keyOf(kind);
       return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : "None";
     }
+
     function operationTargetAliases(owner, target) {
       if (!target) return [];
       if (target.key === "self") {
@@ -28985,17 +30537,21 @@ function MCPV5Create_character_continuity() {
       }
       return uniqueNameForms([target.name], 160);
     }
+
     function operationOwnerMentioned(owner, source) {
       return !!owner && uniqueNameForms([owner.name].concat(owner.aliases || []), 160)
         .some(alias => aliasMentioned(source, alias));
     }
+
     function operationOwnerAliases(owner) {
       return uniqueNameForms([owner && owner.name].concat(owner && owner.aliases || []), 160);
     }
+
     function operationAliasRegExp(alias) {
       const wanted = line(alias, 160).split(/\s+/).map(escapeRegExp).join("\\s+");
       return wanted ? "(?:" + wanted + ")" : "";
     }
+
     function operationFallbackMentionIndex(source, aliases) {
       const text = textOf(source);
       let earliest = -1;
@@ -29012,6 +30568,7 @@ function MCPV5Create_character_continuity() {
       });
       return earliest;
     }
+
     function operationFallbackStateOwnerAnchored(owner, source) {
       if (!owner) return false;
       const text = textOf(source).trim();
@@ -29022,6 +30579,7 @@ function MCPV5Create_character_continuity() {
       return /^(?:at|in|on|near|inside|outside|beside|by|behind|before|after|across|under|over|within|amid|among|from|through)\b[^.!?…\n]{0,80},\s*$/i
         .test(prefix);
     }
+
     function ownerSpeechAttributed(owner, source, statementPattern) {
       const text = textOf(source);
       if (!owner || !text || !(statementPattern instanceof RegExp)) return false;
@@ -29065,6 +30623,7 @@ function MCPV5Create_character_continuity() {
       }
       return false;
     }
+
     function ownerPredicateMatches(owner, source, predicatePattern) {
       const text = textOf(source);
       if (!owner || !text || !predicatePattern) return false;
@@ -29076,6 +30635,7 @@ function MCPV5Create_character_continuity() {
         ).test(text);
       });
     }
+
     function ownerNearEvent(owner, source, eventPattern, maximum = 120) {
       const text = textOf(source);
       if (!owner || !text || !eventPattern) return false;
@@ -29090,6 +30650,7 @@ function MCPV5Create_character_continuity() {
         ).test(text);
       });
     }
+
     function ownerTargetSentenceMatches(owner, target, source, eventPattern) {
       if (!owner || !target || !eventPattern) return false;
       return textOf(source).split(/[.!?…\n]+/).some(sentence => {
@@ -29097,12 +30658,14 @@ function MCPV5Create_character_continuity() {
         return new RegExp(eventPattern, "i").test(sentence);
       });
     }
+
     function operationTargetMentioned(owner, target, source) {
       if (!target) return false;
       if (target.key === "player" && /\byou\b/i.test(textOf(source))) return true;
       if (target.key === "self" && operationOwnerMentioned(owner, source)) return true;
       return operationTargetAliases(owner, target).some(alias => aliasMentioned(source, alias));
     }
+
     function operationCurrentRelevance(item, currentInputId, recent) {
       if (!item) return 0;
       if (item.id === currentInputId) return 4;
@@ -29111,6 +30674,7 @@ function MCPV5Create_character_continuity() {
       if (item.source === "opening" && anchorInText(item.anchor, recent)) return 2;
       return item.source === "story" ? 1 : 0;
     }
+
     const RELATIONSHIP_TRIGGER_FIELDS = {
       affection: ["Closeness"],
       anger: ["Conflict"],
@@ -29127,6 +30691,7 @@ function MCPV5Create_character_continuity() {
       repair: ["Trust", "Conflict"],
       betrayal: ["Trust", "Conflict"]
     };
+
     function relationshipLineageTriggers(record, seen = new Set()) {
       if (!record || seen.has(record.id)) return [];
       seen.add(record.id);
@@ -29138,6 +30703,7 @@ function MCPV5Create_character_continuity() {
       });
       return result.slice(0, 20);
     }
+
     function relationshipGroundedFields(triggers, content) {
       const fields = [];
       const add = field => {
@@ -29154,6 +30720,7 @@ function MCPV5Create_character_continuity() {
       if (/\b(?:accepted responsibility|responsibility|employ\w*|hired|job|position|role|partnership|partnered|marriage|married|spouse|promotion|promoted|in charge|duty)\b/.test(source)) add("Role");
       return fields;
     }
+
     function relationshipGroundedFieldsForRecord(record) {
       if (!record) return [];
       const rawLineage = storyLineageForSources((record.sourceIds || []).concat(record.storyEvidenceIds || []));
@@ -29166,6 +30733,7 @@ function MCPV5Create_character_continuity() {
         managedContent.filter(Boolean).join(" ")
       );
     }
+
     function relationshipDerivedSourceText(record, allowedFields, rawLineage) {
       const targetName = modelTargetName(record.targetKey, record.targetName);
       const fields = (allowedFields || []).join(", ");
@@ -29189,6 +30757,7 @@ function MCPV5Create_character_continuity() {
         settings.MAX_EVIDENCE_ITEM_CHARS
       );
     }
+
     function relationshipDerivedEvidenceCandidates(owner, targets, opportunityOverride = null, frozenPacket = null) {
       const legalTargets = new Map((Array.isArray(targets) ? targets : [])
         .filter(target => target.relationship === true && target.key !== "self")
@@ -29298,6 +30867,7 @@ function MCPV5Create_character_continuity() {
       CC.last.relationshipSourceDiagnostics = unique(diagnostics, 500).slice(-40);
       return candidates;
     }
+
     function viewInterpretationsForTarget(owner, targetKey, targets) {
       const legalModes = (Array.isArray(targets) ? targets : [])
         .filter(target => target && target.key === targetKey)
@@ -29331,6 +30901,7 @@ function MCPV5Create_character_continuity() {
       }
       return interpretations;
     }
+
     const DERIVED_VIEW_BURIAL_PATTERN = /\b(?:forgot|forgets|forgotten|no longer remembers?|memory (?:of|about).{0,40}(?:faded|is gone|was gone)|ceased to remember)\b/i;
     const DERIVED_VIEW_RECOVERY_PATTERN = /\b(?:remembered|remembers|recalled|recalls|recognized|recognizes|memory returned|memories returned)\b/i;
     const DERIVED_VIEW_MAJOR_PATTERN = /\b(?:betrayal|betrayed|saved (?:his|her|their|the) life|life[- ]threatening|sacrificed|sacrifice|murdered|murder|abused|abuse|assaulted|assault|tortured|torture|married|marriage|divorced|divorce|death|died|severed ties|cut ties|irreparable|ruined everything)\b/i;
@@ -29346,6 +30917,7 @@ function MCPV5Create_character_continuity() {
       "indifference", "unmoved", "dislike", "resent", "resentment", "annoyed", "annoyance", "irritated",
       "irritation", "disapprove", "aversion", "hate", "despise", "loathe", "detest", "abhor", "contempt"
     ]);
+
     function provenanceViewSemanticTexts(record) {
       if (!record) return [];
       return unique([
@@ -29357,6 +30929,7 @@ function MCPV5Create_character_continuity() {
         record.resultingViewState
       ], 2000).filter(Boolean);
     }
+
     function provenanceViewOwnerTarget(record) {
       if (!record) return null;
       const owner = characters.find(character => character.key === record.ownerKey) || null;
@@ -29374,6 +30947,7 @@ function MCPV5Create_character_continuity() {
       }
       return null;
     }
+
     function derivedViewDestinationSupported(record, destination) {
       const normalizedDestination = canonicalViewDestination(destination);
       const source = provenanceViewSemanticTexts(record).join(" ");
@@ -29407,6 +30981,7 @@ function MCPV5Create_character_continuity() {
       if (normalizedDestination === "Recovered") return DERIVED_VIEW_RECOVERY_PATTERN.test(source);
       return false;
     }
+
     function derivedViewModeSupported(record, destination, operationMode) {
       const normalizedMode = canonicalViewOperationMode(operationMode);
       if (!normalizedMode) return false;
@@ -29417,6 +30992,7 @@ function MCPV5Create_character_continuity() {
         || (record.kind === "relationship" && record.eventKind === "D"
           && Math.abs(Number(record.actualChange) || 0) >= 10);
     }
+
     function viewGroundingTerms(value, excludedForms) {
       const excluded = new Set();
       const stopped = new Set(Array.from(VIEW_GROUNDING_STOP_WORDS).map(relationshipGroundingStem));
@@ -29429,11 +31005,13 @@ function MCPV5Create_character_continuity() {
         .map(relationshipGroundingStem)
         .filter(token => token.length >= 3 && !stopped.has(token) && !attitudeStem.test(token) && !excluded.has(token)), 80);
     }
+
     function derivedViewInterpretationsForRecord(record, owner, targetKey, targets) {
       return viewInterpretationsForTarget(owner, targetKey, targets).filter(item =>
         derivedViewModeSupported(record, item.destination, item.operationMode)
       );
     }
+
     function derivedViewEvidenceSupportsCandidate(record, owner, target, candidate) {
       if (!record || !owner || !target || !candidate) {
         return { ok: false, error: "Derived View validation lacked its provenance source, owner, target, or candidate." };
@@ -29463,6 +31041,7 @@ function MCPV5Create_character_continuity() {
       }
       return { ok: true };
     }
+
     function viewDerivedSourceText(record, interpretations, rawLineage) {
       const targetName = modelTargetName(record.targetKey, record.targetName);
       const modes = unique((interpretations || []).map(item => item.operationMode), 40).join(", ");
@@ -29485,6 +31064,7 @@ function MCPV5Create_character_continuity() {
         settings.MAX_EVIDENCE_ITEM_CHARS
       );
     }
+
     function viewDerivedEvidenceCandidates(owner, targets, opportunityOverride = null, frozenPacket = null) {
       const targetLists = new Map();
       (Array.isArray(targets) ? targets : []).forEach(target => {
@@ -29621,20 +31201,77 @@ function MCPV5Create_character_continuity() {
       CC.last.viewSourceDiagnostics = unique(diagnostics, 500).slice(-40);
       return candidates;
     }
+
+    function operationPhraseIndex(values) {
+      const result = new Map();
+      const seen = new Set();
+      (Array.isArray(values) ? values : []).forEach(value => {
+        const normalized = keyOf(line(value, 160));
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        const words = normalized.split(" ");
+        const bucket = result.get(words[0]) || [];
+        bucket.push(words);
+        result.set(words[0], bucket);
+      });
+      return result;
+    }
+
+    function operationVerbForms(verbs) {
+      const result = new Set();
+      (Array.isArray(verbs) ? verbs : []).forEach(value => {
+        const source = textOf(value).trim().toLowerCase();
+        const optionalS = source.match(/^([a-z0-9]+)s\?$/);
+        if (optionalS) {
+          result.add(optionalS[1]);
+          result.add(optionalS[1] + "s");
+          return;
+        }
+        const normalized = keyOf(source);
+        if (normalized && !normalized.includes(" ")) result.add(normalized);
+      });
+      return result;
+    }
+
+    function operationWordsMatch(words, start, phrase) {
+      if (start < 0 || start + phrase.length > words.length) return false;
+      for (let index = 0; index < phrase.length; index++) {
+        if (words[start + index] !== phrase[index]) return false;
+      }
+      return true;
+    }
+
     function orderedOperationStatement(source, subjects, verbs, objects) {
       const normalized = keyOf(source);
       if (!normalized) return false;
-      const subjectList = unique(subjects, 160).map(keyOf).filter(Boolean);
-      const objectList = unique(objects, 160).map(keyOf).filter(Boolean);
-      return subjectList.some(subject => objectList.some(object => verbs.some(verb => {
-        const pattern = new RegExp(
-          "(?:^| )" + escapeRegExp(subject) + " (?:really |fully |completely |deeply )?"
-          + verb + " " + escapeRegExp(object) + "(?: |$)",
-          "i"
-        );
-        return pattern.test(normalized);
-      })));
+      const words = normalized.split(" ");
+      const subjectIndex = operationPhraseIndex(subjects);
+      const objectIndex = operationPhraseIndex(objects);
+      const verbForms = operationVerbForms(verbs);
+      if (!subjectIndex.size || !objectIndex.size || !verbForms.size) return false;
+      const emphases = new Set(["really", "fully", "completely", "deeply"]);
+
+      // Match the same subject → optional emphasis → verb → object order as the
+      // former dynamic regex, but scan the normalized words once. This avoids
+      // compiling and testing every subject/object/verb combination each turn.
+      for (let start = 0; start < words.length; start++) {
+        const subjectsAtStart = subjectIndex.get(words[start]);
+        if (!subjectsAtStart) continue;
+        for (const subject of subjectsAtStart) {
+          if (!operationWordsMatch(words, start, subject)) continue;
+          let verbIndex = start + subject.length;
+          if (emphases.has(words[verbIndex])) verbIndex += 1;
+          if (!verbForms.has(words[verbIndex])) continue;
+          const objectStart = verbIndex + 1;
+          const objectsAtStart = objectIndex.get(words[objectStart]);
+          if (objectsAtStart && objectsAtStart.some(object =>
+            operationWordsMatch(words, objectStart, object)
+          )) return true;
+        }
+      }
+      return false;
     }
+
     function nameSignal(owner, target, evidenceCandidate) {
       const item = evidenceCandidate && evidenceCandidate.item;
       if (!item || evidenceCandidate.nameEligible !== true || !target || target.nameSubject !== true) return null;
@@ -29663,6 +31300,7 @@ function MCPV5Create_character_continuity() {
           reason: "Explicit Name fact or transition in " + item.id + "."
         };
       }
+
       const identityKey = target.key === "self" ? "npc:" + owner.key : target.key;
       const identity = nameIdentityForKey(identityKey);
       const emerging = identity && Array.isArray(identity.emergingAliases) ? identity.emergingAliases : [];
@@ -29681,6 +31319,7 @@ function MCPV5Create_character_continuity() {
       }
       return null;
     }
+
     function stateActingTarget(owner, targets, source) {
       if (!owner) return null;
       const action = "(?:offers?|offered|signs?|signed|gives?|gave|hands?|handed|entrusts?|entrusted"
@@ -29710,6 +31349,7 @@ function MCPV5Create_character_continuity() {
       });
       return acting.length === 1 ? acting[0] : null;
     }
+
     function stateSignal(owner, targets, evidenceCandidate, currentInputId, recent) {
       const item = evidenceCandidate && evidenceCandidate.item;
       if (!item || evidenceCandidate.stateEligible !== true) return null;
@@ -29722,6 +31362,7 @@ function MCPV5Create_character_continuity() {
         && CC.activeKeys.length === 1
         && CC.activeKeys[0] === owner.key;
       if ((!ownerMentioned && !focusedSoloOwner) || !current) return null;
+
       const dangerPattern = "\\b(?:danger|threat|threatens?|attack(?:s|ed)?|ambush|explosion|fire|flames?|collaps(?:e|es|ed|ing)|falling beam|beam (?:falls|fell)|crash(?:es|ed|ing)?|lung(?:e|es|ed|ing)|weapon|blade|gun|arrow|injured|bleeding|trapped|poisoned|drowning)\\b";
       const emotionPredicate = "\\b(?:(?:looks?|seems?|appears?|feels?|became|turns?)\\s+(?:visibly |suddenly )?(?:afraid|angry|anxious|ashamed|confused|devastated|frightened|furious|grieving|hopeful|hurt|relieved|shocked|stunned|terrified|uncertain|upset|worried)|flinches?|freezes?|gasps?|recoils?|trembles?|hesitates?|stiffens?|breaks down|bursts into tears)\\b";
       const firstPersonEmotion = /\b(?:i am|i'm|i feel|i felt|i became)\s+(?:afraid|angry|anxious|ashamed|confused|devastated|frightened|furious|grieving|hopeful|hurt|relieved|shocked|stunned|terrified|uncertain|upset|worried)\b/i;
@@ -29731,6 +31372,7 @@ function MCPV5Create_character_continuity() {
       const tensionPredicate = "\\b(?:is |was |became |seems? |looks? )?(?:torn|conflicted|under tension|strained|at odds)|\\b(?:struggles? between|hesitates? between)\\b";
       const situationPredicate = "\\b(?:is|was|became|has become|must now|now has to|is now|was now)\\b[^.!?…\\n]{0,40}\\b(?:trapped|alone|responsible|in charge|leaving|staying|fired|promoted|moving|married|separated)\\b";
       const firstPersonSituation = /\bi\s+(?:am now|was now|must now|have become|am|was)\s+(?:trapped|alone|responsible|in charge|leaving|staying|fired|promoted|moving|married|separated)\b/i;
+
       const categories = [];
       if (ownerNearEvent(owner, source, dangerPattern, 120)) categories.push("immediate danger");
       if (ownerPredicateMatches(owner, source, emotionPredicate)
@@ -29768,7 +31410,9 @@ function MCPV5Create_character_continuity() {
           { situation: currentState.situation.value },
           continuationSource
         );
+
       if (!categories.length && !baselineState && !confirmationState) return null;
+
       let targetKey = "self";
       if (confirmationState) {
         targetKey = currentSituationTarget.key;
@@ -29807,6 +31451,7 @@ function MCPV5Create_character_continuity() {
             : "Strong current State signal (" + categories.join(", ") + ") in " + item.id + ".")
       };
     }
+
     function explicitRelationshipSignal(owner, target, evidenceCandidate) {
       const item = evidenceCandidate && evidenceCandidate.item;
       if (!item || evidenceCandidate.relationshipEligible !== true || !target || target.relationship !== true || target.key === "self") return null;
@@ -29814,6 +31459,7 @@ function MCPV5Create_character_continuity() {
       const ownerMentioned = operationOwnerMentioned(owner, source);
       const targetMentioned = operationTargetMentioned(owner, target, source);
       if (!ownerMentioned || !targetMentioned) return null;
+
       const targetObjects = target.key === "player"
         ? ["you", player.name].concat(player.aliases || [])
         : operationTargetAliases(owner, target);
@@ -29847,6 +31493,7 @@ function MCPV5Create_character_continuity() {
           reason: "Explicit completed Trust fact in " + item.id + "."
         };
       }
+
       if (ownerTargetSentenceMatches(owner, target, source, "\\b(?:betrayed|betrayal)\\b")) {
         return {
           kind: "relationship",
@@ -29893,6 +31540,7 @@ function MCPV5Create_character_continuity() {
       }
       return null;
     }
+
     function explicitViewSignal(owner, target, evidenceCandidate) {
       const item = evidenceCandidate && evidenceCandidate.item;
       if (!item || evidenceCandidate.viewEligible !== true || !target) return null;
@@ -29900,6 +31548,7 @@ function MCPV5Create_character_continuity() {
       const ownerMentioned = operationOwnerMentioned(owner, source);
       const targetMentioned = operationTargetMentioned(owner, target, source);
       if (!ownerMentioned || !targetMentioned) return null;
+
       const targetObjects = target.key === "player"
         ? ["you", player.name].concat(player.aliases || [])
         : operationTargetAliases(owner, target);
@@ -29933,6 +31582,7 @@ function MCPV5Create_character_continuity() {
       }
       return null;
     }
+
     function operationEvidenceSignature(candidate, evidenceItems) {
       const items = (Array.isArray(evidenceItems) ? evidenceItems : []).filter(item => item && item.id);
       if (!items.length) return "";
@@ -29947,6 +31597,7 @@ function MCPV5Create_character_continuity() {
         lineage
       ].join("|")), 500);
     }
+
     function operationDrainForCandidate(candidate, ownerOpportunity) {
       if (!candidate || candidate.gain <= 0 || !candidate.evidenceSignature) return 0;
       const ownerKey = line(candidate.ownerKey, 160);
@@ -29967,6 +31618,7 @@ function MCPV5Create_character_continuity() {
         ? Math.max(...matching.map(record => effectiveOperationDrainValue(record, ownerOpportunity)))
         : 0;
     }
+
     function blankScoringCandidate(kind, owner) {
       const ownerState = CC.operationState.owners[owner.key] || blankOwnerOperationState();
       const meter = ownerState[kind] || blankOperationMeter();
@@ -29992,6 +31644,7 @@ function MCPV5Create_character_continuity() {
         reasons: ["No positive grounded " + operationKindLabel(kind) + " signal."]
       };
     }
+
     function operationCandidateGroups(owner, signals, currentInputId, recent, scoringOpportunity) {
       const groups = {};
       (Array.isArray(signals) ? signals : []).forEach(entry => {
@@ -30106,10 +31759,12 @@ function MCPV5Create_character_continuity() {
         return candidate;
       });
     }
+
     function operationCandidateFallbackRank(kind) {
       const index = MODEL_OPERATION_KINDS.indexOf(keyOf(kind));
       return index >= 0 ? index : MODEL_OPERATION_KINDS.length;
     }
+
     function compareOperationCandidates(left, right) {
       if (right.gain !== left.gain) return right.gain - left.gain;
       if (left.drain !== right.drain) return left.drain - right.drain;
@@ -30125,6 +31780,7 @@ function MCPV5Create_character_continuity() {
       return [left.targetKey, left.field, left.destination, left.evidenceSignature].join("|")
         .localeCompare([right.targetKey, right.field, right.destination, right.evidenceSignature].join("|"));
     }
+
     function operationSelectionCriterion(selected, runnerUp) {
       if (!selected) return "No candidate had positive grounded gain.";
       if (!runnerUp) return "Only one positive grounded candidate was available.";
@@ -30138,6 +31794,7 @@ function MCPV5Create_character_continuity() {
       if (selected.kind !== runnerUp.kind) return "Stable fallback Name → State → Relationship → View broke the final tie.";
       return "Stable lexical fallback broke the final same-kind tie.";
     }
+
     function operationCandidatesForOwner(owner, targets, evidenceCandidates, currentInputId, recent, scoringOpportunity) {
       const signals = [];
       const legalTargets = Array.isArray(targets) ? targets : [];
@@ -30199,6 +31856,7 @@ function MCPV5Create_character_continuity() {
           });
         }
       });
+
       const candidates = operationCandidateGroups(owner, signals, currentInputId, recent, scoringOpportunity);
       MODEL_OPERATION_KINDS.forEach(kind => {
         if (!candidates.some(candidate => candidate.kind === kind)) candidates.push(blankScoringCandidate(kind, owner));
@@ -30208,6 +31866,7 @@ function MCPV5Create_character_continuity() {
         || left.field.localeCompare(right.field)
         || left.destination.localeCompare(right.destination));
     }
+
     function selectOperationCandidate(candidates) {
       const positive = (Array.isArray(candidates) ? candidates : []).filter(candidate => candidate.gain > 0)
         .slice().sort(compareOperationCandidates);
@@ -30223,11 +31882,13 @@ function MCPV5Create_character_continuity() {
         : [tieBreak];
       return { selected, tieBreak, reasons };
     }
+
     function experienceReadinessGain(owner) {
       const state = normalizeState(CC.npcs[owner.key] && CC.npcs[owner.key].state, CC.stateClock);
       if (!state.situation.value || state.situation.promotedSignature) return 0;
       return Math.max(0, state.situation.confirmations) * settings.OPERATION_POINTS.EXPERIENCE_PATTERN_GAIN;
     }
+
     function syncOperationMeters(owner, candidates) {
       if (!owner) return;
       if (!CC.operationState.owners[owner.key]) CC.operationState.owners[owner.key] = blankOwnerOperationState();
@@ -30242,6 +31903,7 @@ function MCPV5Create_character_continuity() {
       ownerState.experience.gain = experienceReadinessGain(owner);
       ownerState.experience.drain = 0;
     }
+
     function freezeOperationSelection(plan, owner, targets, evidenceCandidates, currentInputId, recent) {
       if (!plan || !owner) return;
       if (plan.operationSelectionFrozen === true) {
@@ -30266,6 +31928,7 @@ function MCPV5Create_character_continuity() {
       plan.operationTieBreak = selection.tieBreak;
       syncOperationMeters(owner, candidates);
     }
+
     function operationEligibilityField(kind) {
       return {
         name: "nameEligible",
@@ -30274,6 +31937,7 @@ function MCPV5Create_character_continuity() {
         view: "viewEligible"
       }[keyOf(kind)] || "";
     }
+
     function operationEvidenceEligible(candidate, kind) {
       const field = operationEligibilityField(kind);
       if (!field || !candidate || !candidate.item || candidate[field] !== true) return false;
@@ -30283,6 +31947,7 @@ function MCPV5Create_character_continuity() {
       if (keyOf(kind) === "view") return ["E", "R", "X"].includes(id.charAt(0));
       return id.charAt(0) === "E";
     }
+
     function operationEvidenceLimit(kind, selectedCandidate) {
       const normalized = keyOf(kind);
       const direct = selectedCandidate && selectedCandidate.direct === true;
@@ -30290,6 +31955,7 @@ function MCPV5Create_character_continuity() {
       if (["state", "relationship", "view"].includes(normalized)) return direct ? 1 : 2;
       return 1;
     }
+
     function operationPacketSourceIds(kind, selectedCandidate, frozenIds) {
       const normalized = keyOf(kind);
       const source = Array.isArray(frozenIds) && frozenIds.length
@@ -30310,6 +31976,7 @@ function MCPV5Create_character_continuity() {
         })
         .slice(0, operationEvidenceLimit(normalized, selectedCandidate));
     }
+
     function operationEvidenceCandidatesForKind(kind, candidates, selectedCandidate, frozenIds) {
       const normalizedKind = keyOf(kind);
       const directRelationship = normalizedKind === "relationship"
@@ -30333,6 +32000,7 @@ function MCPV5Create_character_continuity() {
       });
       return ordered;
     }
+
     function operationTargetsForKind(kind, targets) {
       const source = Array.isArray(targets) ? targets : [];
       if (kind === "name") return source.filter(target => target.nameSubject === true && target.mode === "known");
@@ -30341,6 +32009,7 @@ function MCPV5Create_character_continuity() {
       if (kind === "view") return source.slice();
       return [];
     }
+
     function operationEvidenceSnippet(owner, target, kind, value) {
       const maximum = settings.MAX_OPERATION_EVIDENCE_CHARS;
       const source = canonicalOutput(value);
@@ -30375,6 +32044,7 @@ function MCPV5Create_character_continuity() {
       return chosen.sort((left, right) => left.index - right.index).map(item => item.text).join(" ")
         || shortenProfileValue(source, maximum);
     }
+
     function evidencePacketForKind(owner, kind, candidates, currentInputId, recent, target) {
       const eligible = (Array.isArray(candidates) ? candidates : [])
         .filter(candidate => operationEvidenceEligible(candidate, kind));
@@ -30402,11 +32072,13 @@ function MCPV5Create_character_continuity() {
       });
       return rows.join("\n");
     }
+
     const STATE_PRONOUN_FAMILIES = [
       { key: "she", label: "she/her", forms: ["she", "her", "hers", "herself"] },
       { key: "he", label: "he/him", forms: ["he", "him", "his", "himself"] },
       { key: "they", label: "they/them", forms: ["they", "them", "their", "theirs", "themself", "themselves"] }
     ];
+
     function statePronounProfileFromForms(forms) {
       const values = (Array.isArray(forms) ? forms : [])
         .map(value => line(value, 80))
@@ -30419,6 +32091,7 @@ function MCPV5Create_character_continuity() {
         display: values.slice(0, 2).join("/")
       };
     }
+
     function stateTargetPronounProfile(owner, target) {
       if (!target || target.key === "self") return null;
       if (target.key === "player") {
@@ -30443,6 +32116,7 @@ function MCPV5Create_character_continuity() {
       if (subject === "it") return statePronounProfileFromForms(["it", "it", "its", "its", "itself"]);
       return statePronounProfileFromForms(supplied);
     }
+
     function stateTargetPronounInstruction(owner, target) {
       if (target && target.key === "self" && owner) {
         return "Target reference: Self means " + owner.name
@@ -30454,6 +32128,7 @@ function MCPV5Create_character_continuity() {
           + " pronouns. Plural references include an explicit group cue in the State record."
         : "";
     }
+
     function targetPacketForKind(owner, kind, targets) {
       const legal = operationTargetsForKind(kind, targets);
       if (!legal.length) return "";
@@ -30466,6 +32141,7 @@ function MCPV5Create_character_continuity() {
       const targetReference = kind === "state" ? stateTargetPronounInstruction(owner, legal[0]) : "";
       return ["Target: " + rows.join(", "), targetReference].filter(Boolean).join("\n");
     }
+
     function relationshipOperationDestinations(field, selectedCandidate) {
       const selected = line(selectedCandidate && selectedCandidate.destination, 120);
       if (selected) return [selected];
@@ -30474,6 +32150,7 @@ function MCPV5Create_character_continuity() {
       if (field === "Boundaries") destinations.push("Released");
       return unique(destinations, 120);
     }
+
     function relationshipFieldMeaning(field) {
       return {
         Role: "Role expresses an actual social status.",
@@ -30483,6 +32160,7 @@ function MCPV5Create_character_continuity() {
         Conflict: "Conflict expresses active interpersonal friction."
       }[field] || "The selected field expresses its completed-event meaning.";
     }
+
     function viewOperationDestinations(target, selectedCandidate) {
       const selected = line(selectedCandidate && selectedCandidate.destination, 120);
       if (selected) return [selected];
@@ -30491,6 +32169,7 @@ function MCPV5Create_character_continuity() {
       if (target && target.mode === "buried") return ["Recovered"];
       return VIEW_CATEGORIES.concat(target && target.mode === "known" ? ["Buried"] : []);
     }
+
     function operationTaskForKind(kind, owner, targets, evidenceCandidates, currentInputId, recent, frozenPace, selectedCandidate) {
       const normalized = keyOf(kind);
       if (!MODEL_OPERATION_KINDS.includes(normalized)) return "";
@@ -30609,6 +32288,7 @@ function MCPV5Create_character_continuity() {
       }
       return ["<SYSTEM>", ...rules.filter(Boolean), "</SYSTEM>"].join("\n");
     }
+
     function recoveryTask() {
       return [
         "<SYSTEM>",
@@ -30616,6 +32296,7 @@ function MCPV5Create_character_continuity() {
         "</SYSTEM>"
       ].join("\n");
     }
+
     function portrayalRules() {
       return [
         "Portray each active NPC distinctly from that NPC's supplied Outer, Names, Inner, State, Relationships, Views, and Experiences. Principles guide choices; Thought appears through behavior or subtext. Outer and Inner remain creator-authored anchors.",
@@ -30626,15 +32307,18 @@ function MCPV5Create_character_continuity() {
           + " | " + player.agreement
       ].join("\n");
     }
+
     function availableContinuityBudget(base, maxChars) {
       if (!maxChars) return runtime.continuityBudget;
       const availableChars = Math.max(0, maxChars - textOf(base).length - 4);
       return Math.min(runtime.continuityBudget, Math.floor(availableChars / 3.25));
     }
+
     function renderPortrayalComponents(components) {
       const body = components.map(component => component.text).filter(Boolean).join("\n");
       return body ? "<SYSTEM>\n" + body + "\n</SYSTEM>" : "";
     }
+
     function fitWithoutTrimming(base, prefix, tail, maxChars) {
       const joined = [prefix, base, tail].filter(Boolean).join("\n\n");
       if (!maxChars || joined.length <= maxChars) {
@@ -30647,6 +32331,7 @@ function MCPV5Create_character_continuity() {
         reason: "The immutable platform context left insufficient room for this complete continuity packet."
       };
     }
+
     function assembleContext(base, active, focus, currentInput, recent, plan) {
       const components = [];
       let tail = CC.recoveryPending ? recoveryTask() : "";
@@ -30669,6 +32354,7 @@ function MCPV5Create_character_continuity() {
         && MODEL_OPERATION_KINDS.includes(keyOf(plan.selectedOperationKind))
         && plan.selectedCandidate
       );
+
       const composition = (candidateComponents = components, candidateTail = tail, tokenLimit = 0) => {
         const prefix = renderPortrayalComponents(candidateComponents);
         const tokens = estimateTokens([prefix, candidateTail].filter(Boolean).join("\n"));
@@ -30722,6 +32408,7 @@ function MCPV5Create_character_continuity() {
         });
         return chosen;
       };
+
       const core = [{ text: portrayalRules(), type: "rules", order: -1 }];
       const focusAnchors = [
         { text: outerAnchor(focus), type: "outer", ownerKey: focus.key, order: 0 },
@@ -30748,6 +32435,7 @@ function MCPV5Create_character_continuity() {
         CC.last.modelOmitted.push(focus.name + " compact Outer/Inner reserved for the operation turn");
       }
       modelActive.push(focus);
+
       active.filter(character => character.key !== focus.key).forEach(character => {
         const pair = [
           { text: outerAnchor(character), type: "outer", ownerKey: character.key, order: 0 },
@@ -30756,14 +32444,17 @@ function MCPV5Create_character_continuity() {
         if (addGroup(pair)) modelActive.push(character);
         else CC.last.modelOmitted.push(character.name + " Outer/Inner pair");
       });
+
       const playerNamesIdentity = nameIdentityForKey("player");
       if (playerNamesIdentity) addNamesProjection(playerNamesIdentity, focus.key, 3, "player");
       const focusNamesIdentity = nameIdentityForKey("npc:" + focus.key);
       if (focusNamesIdentity) addNamesProjection(focusNamesIdentity, focus.key, 3, "focus:" + focus.key);
+
       const focusState = temporaryStateLine(focus);
       if (focusState && !addGroup([{ text: focusState, type: "state", ownerKey: focus.key, order: 3 }])) {
         CC.last.modelOmitted.push(focus.name + " current State");
       }
+
       const frozenEvidenceIds = plan.retry && Array.isArray(plan.retryEvidenceIds) && plan.retryEvidenceIds.length
         ? plan.retryEvidenceIds
         : (plan.opportunityCounted && Array.isArray(plan.evidenceIds) ? plan.evidenceIds : []);
@@ -30836,6 +32527,7 @@ function MCPV5Create_character_continuity() {
           omittedViews.push(focus.name + " recovered " + block.targetKey);
         }
       });
+
       const normalFocusSelections = focusActiveSelections.filter(item => !recoveringMarker(focus.key, item.record.targetKey));
       const selectedFocusSelections = [];
       let focusViewsBlocked = false;
@@ -30862,6 +32554,7 @@ function MCPV5Create_character_continuity() {
           omittedViews.push(focus.name + "→" + modelViewTargetName(selection.record));
         }
       });
+
       const contextVisibleFocusSelections = selectedFocusSelections.concat(
         focusActiveSelections.filter(item => selectedRecoveredTargets.has(item.record.targetKey))
       );
@@ -30924,6 +32617,7 @@ function MCPV5Create_character_continuity() {
         plan.selectedCandidate,
         frozenTaskEvidenceIds
       );
+
       const fitOperationByEvictingOptionalContext = proposedTail => {
         let working = components.slice();
         let fit = composition(working, proposedTail, settings.MAX_OPERATION_TURN_TOKENS);
@@ -30957,6 +32651,7 @@ function MCPV5Create_character_continuity() {
         working.filter(component => component.type !== "rules"
           && !(component.ownerKey === focus.key && ["outer", "inner"].includes(component.type)))
           .forEach(component => pushGroup([component]));
+
         const commitWorking = (next, compactFocus) => {
           const kept = new Set(next);
           const removed = components.filter(component => !kept.has(component));
@@ -31023,6 +32718,7 @@ function MCPV5Create_character_continuity() {
           }
           components.splice(0, components.length, ...next);
         };
+
         for (const group of groups) {
           const removable = new Set(group);
           working = working.filter(component => !removable.has(component));
@@ -31031,6 +32727,7 @@ function MCPV5Create_character_continuity() {
           commitWorking(working, false);
           return fit;
         }
+
         const compactPair = [
           { text: compactOperationOuterAnchor(focus), type: "outer", ownerKey: focus.key, order: 0 },
           { text: compactOperationInnerAnchor(focus), type: "inner", ownerKey: focus.key, order: 2 }
@@ -31045,6 +32742,7 @@ function MCPV5Create_character_continuity() {
         }
         return fit;
       };
+
       let selectedEvidence = [];
       let taskDelivered = false;
       let taskDeferredReason = "";
@@ -31122,6 +32820,7 @@ function MCPV5Create_character_continuity() {
       } else if (plan.opportunity && !CC.recoveryPending) {
         taskDeferredReason = "No eligible completed evidence was available for the frozen operation kind.";
       }
+
       modelActive.filter(character => character.key !== focus.key).forEach(character => {
         const stateBlock = temporaryStateLine(character);
         if (stateBlock && !addGroup([{ text: stateBlock, type: "state", ownerKey: character.key, order: 3 }])) {
@@ -31193,6 +32892,7 @@ function MCPV5Create_character_continuity() {
           }
         });
       });
+
       omittedNames.forEach(item => {
         const label = item + " Name projection";
         if (!CC.last.modelOmitted.includes(label)) CC.last.modelOmitted.push(label);
@@ -31201,6 +32901,7 @@ function MCPV5Create_character_continuity() {
         const label = item + " Relationship projection";
         if (!CC.last.modelOmitted.includes(label)) CC.last.modelOmitted.push(label);
       });
+
       if (compactOperationCoreUsed && !taskDelivered) {
         return {
           ok: false,
@@ -31208,6 +32909,7 @@ function MCPV5Create_character_continuity() {
           effectiveBudget
         };
       }
+
       const ownerOrder = new Map(modelActive.map((character, index) => [character.key, index]));
       const orderedComponents = components.map((component, index) => ({ ...component, insertionOrder: index }))
         .sort((left, right) => {
@@ -31266,6 +32968,7 @@ function MCPV5Create_character_continuity() {
         recentChars: final.fitted.recentChars
       };
     }
+
     function controlPresentationText(value) {
       let source = textOf(value).replace(/\r/g, "").trim();
       if (!source) return "";
@@ -31287,6 +32990,7 @@ function MCPV5Create_character_continuity() {
       }
       return source;
     }
+
     function ccoPresentation(value) {
       const original = textOf(value).replace(/\r/g, "").trim();
       let source = controlPresentationText(original);
@@ -31299,6 +33003,7 @@ function MCPV5Create_character_continuity() {
       const unwrapped = controlPresentationText(source);
       if (unwrapped !== source) changed = true;
       source = unwrapped;
+
       let numericAnnotation = "";
       const annotation = source.match(/\s+([+-]\d+)\s*$/);
       if (annotation) {
@@ -31309,12 +33014,14 @@ function MCPV5Create_character_continuity() {
       const annotationUnwrapped = controlPresentationText(source);
       if (annotationUnwrapped !== source) changed = true;
       source = annotationUnwrapped;
+
       const squareWrapped = source.match(/^\[\s*(CCO\|[^()[\]{}\r\n]*)\s*\]$/);
       const braceWrapped = source.match(/^\{\s*(CCO\|[^()[\]{}\r\n]*)\s*\}$/);
       if (squareWrapped || braceWrapped) {
         source = (squareWrapped || braceWrapped)[1].trim();
         changed = true;
       }
+
       const parenthesized = /^\(CCO\|[^()\r\n]*\)$/.test(source);
       const bare = /^CCO\|[^()\r\n]*$/.test(source);
       return {
@@ -31328,6 +33035,7 @@ function MCPV5Create_character_continuity() {
           || /^(?:\(\s*)?[SNRV]\s*\|/i.test(source)
       };
     }
+
     function bareCcoIndex(value) {
       const source = textOf(value);
       const pattern = /CCO\s*\|/gi;
@@ -31340,6 +33048,7 @@ function MCPV5Create_character_continuity() {
       }
       return -1;
     }
+
     function injectedControlReferenceLines(plan) {
       const packets = [];
       if (plan && Array.isArray(plan.modelActiveKeys) && plan.modelActiveKeys.length) {
@@ -31351,6 +33060,7 @@ function MCPV5Create_character_continuity() {
         .map(controlPresentationText)
         .filter(value => value && !/^<\/?SYSTEM>$/i.test(value)), 1000);
     }
+
     function operationInstructionEchoLine(value, plan) {
       const source = textOf(value).replace(/\r/g, "").trim();
       if (!source) return false;
@@ -31427,6 +33137,7 @@ function MCPV5Create_character_continuity() {
         /^Keep \|, \(, and \) for protocol structure\b/i
       ].some(pattern => pattern.test(normalized));
     }
+
     function stripSystemControlBlocks(value) {
       let source = textOf(value).replace(/\r/g, "");
       const removed = [];
@@ -31447,6 +33158,7 @@ function MCPV5Create_character_continuity() {
       });
       return { text: source, removed };
     }
+
     function stripControlCodeFences(value, plan) {
       const lines = textOf(value).replace(/\r/g, "").split("\n");
       const removed = [];
@@ -31649,6 +33361,7 @@ function MCPV5Create_character_continuity() {
         .trim();
       return source;
     }
+
     function operationFallbackFieldEntries(value, kind) {
       let source = controlPresentationText(value).replace(/\r/g, "").trim();
       if (!source) return [];
@@ -31672,6 +33385,7 @@ function MCPV5Create_character_continuity() {
           debug("Operation fallback JSON presentation was not exact JSON: " + error.message);
         }
       }
+
       const parseSegment = rawSegment => {
         const segment = textOf(rawSegment).trim()
           .replace(/^[{[]\s*/, "")
@@ -31699,12 +33413,14 @@ function MCPV5Create_character_continuity() {
       const single = parseSegment(source);
       return single ? [single] : [];
     }
+
     function operationFallbackWrapperLine(value) {
       const source = controlPresentationText(value).trim();
       return /^(?:```[A-Za-z0-9_-]*|~~~[A-Za-z0-9_-]*|```|~~~|[{}\[\]()]\,?)$/.test(source)
         || /^\|\s*(?:field|label|key)\s*\|\s*(?:value|content)\s*\|$/i.test(source)
         || /^\|\s*:?-{3,}:?\s*\|\s*:?-{3,}:?\s*\|$/.test(source);
     }
+
     function operationFallbackHeaderLine(value, kind, owner) {
       const source = controlPresentationText(value)
         .replace(/\*\*|__/g, "")
@@ -31764,11 +33480,13 @@ function MCPV5Create_character_continuity() {
       }
       return null;
     }
+
     function operationFallbackRouteLine(value) {
       const source = controlPresentationText(value).replace(/\*\*|__/g, "").trim();
       const match = source.match(/^(S|P|N[1-5])\s*:\s*(\S.*)$/i);
       return match ? { code: match[1].toUpperCase(), value: match[2].trim() } : null;
     }
+
     function frozenOperationEvidenceIds(plan, kind) {
       const supplied = {};
       (Array.isArray(plan && plan.sourcePacket) ? plan.sourcePacket : []).forEach(sourceItem => {
@@ -31786,6 +33504,7 @@ function MCPV5Create_character_continuity() {
             && eligibility && eligibility[eligibilityKey] === true;
         }));
     }
+
     function operationFallbackEvidenceIds(value, frozenIds) {
       const source = textOf(value).toUpperCase();
       const ids = source.match(/[ESXRV]\d+/g) || [];
@@ -31799,6 +33518,7 @@ function MCPV5Create_character_continuity() {
         ? ids
         : [];
     }
+
     function operationFallbackTargetValid(value, owner, target) {
       if (!target) return false;
       const source = operationFallbackScalar(value);
@@ -31808,6 +33528,7 @@ function MCPV5Create_character_continuity() {
       return frozenTargetDisplayNames(owner, target)
         .some(name => sameNameForm(source, name));
     }
+
     function operationFallbackTriggerCodes(value) {
       const supplied = textOf(value).match(/[A-Za-z_]+/g) || [];
       const triggers = supplied.map(normalizeTriggerCode);
@@ -31818,6 +33539,7 @@ function MCPV5Create_character_continuity() {
         ? triggers
         : [];
     }
+
     function operationFallbackRecordValue(value) {
       let source = textOf(value).replace(/\r/g, "").trim().replace(/,\s*$/, "").trim();
       const pair = source.length >= 2
@@ -31839,10 +33561,12 @@ function MCPV5Create_character_continuity() {
       }
       return source;
     }
+
     function operationFallbackSingleField(fields, label) {
       const matching = fields.filter(field => field.label === label);
       return matching.length === 1 ? matching[0] : null;
     }
+
     function operationFallbackRecoveryRecord(block, kind, owner, plan) {
       if (!block || block.routes.length) return null;
       const normalizedKind = keyOf(kind);
@@ -31860,6 +33584,7 @@ function MCPV5Create_character_continuity() {
         inferredEvidence = true;
       }
       if (!evidenceIds.length) return null;
+
       const allowed = {
         state: new Set(["evidence", "target", "operationcode", "trigger", "situation", "thought"]),
         name: new Set(["evidence", "target", "operationcode", "alias", "transition", "use", "oldalias", "explanation"]),
@@ -32131,6 +33856,7 @@ function MCPV5Create_character_continuity() {
       }
       return null;
     }
+
     function operationFallbackInlineTriggerTuple(value, explicit = false) {
       let source = controlPresentationText(value).replace(/\*\*|__|`/g, "").trim();
       const wrapped = source.length >= 2
@@ -32170,6 +33896,7 @@ function MCPV5Create_character_continuity() {
         .test(source)) {
         return { wrapper: true };
       }
+
       const rawTable = textOf(value).replace(/\r/g, "").trim();
       if (rawTable.startsWith("|") && rawTable.endsWith("|")) {
         const cells = rawTable.slice(1, -1).split("|")
@@ -32359,6 +34086,7 @@ function MCPV5Create_character_continuity() {
       }
       return null;
     }
+
     function stripOperationFallbackBlocks(value, plan, allowRecovery = true) {
       let source = textOf(value).replace(/\r/g, "");
       const unchanged = () => ({
@@ -32375,6 +34103,7 @@ function MCPV5Create_character_continuity() {
         || !MODEL_OPERATION_KINDS.includes(kind)) return unchanged();
       const owner = characters.find(character => character.key === plan.ownerKey) || null;
       if (!owner) return unchanged();
+
       let total = 0;
       let sample = "";
       const patterns = [];
@@ -32407,12 +34136,15 @@ function MCPV5Create_character_continuity() {
         inferredEvidence: recoveries.length === 1 && recoveries[0].inferredEvidence === true
       };
     }
+
     function authorizedOperationKindFromCode(code) {
       return { N: "name", S: "state", R: "relationship", V: "view" }[textOf(code).toUpperCase()] || "";
     }
+
     function authorizedOperationCodeFromKind(kind) {
       return { name: "N", state: "S", relationship: "R", view: "V" }[keyOf(kind)] || "";
     }
+
     function frozenSelectedOperationTarget(plan) {
       const selectedKey = normalizedTargetKey(plan && plan.selectedCandidate && plan.selectedCandidate.targetKey);
       if (!selectedKey) return null;
@@ -32420,6 +34152,7 @@ function MCPV5Create_character_continuity() {
         normalizedTargetKey(target && target.key) === selectedKey
       ) || null;
     }
+
     function frozenTargetDisplayNames(owner, target) {
       if (!target) return [];
       const names = [target.name];
@@ -32431,6 +34164,7 @@ function MCPV5Create_character_continuity() {
       }
       return uniqueNameForms(names, 160);
     }
+
     function canonicalizeFrozenOperationRouting(parts, plan) {
       const result = Array.isArray(parts) ? parts.slice() : [];
       const changed = [];
@@ -32484,6 +34218,7 @@ function MCPV5Create_character_continuity() {
         duplicatedTargetRouting
       };
     }
+
     function parsedCcoReason(label, routing) {
       const fields = routing && Array.isArray(routing.changed) ? routing.changed : [];
       const canonicalized = fields.length
@@ -32503,11 +34238,13 @@ function MCPV5Create_character_continuity() {
           ? " Frozen owner name in the target field was canonicalized to the authorized target code."
           : "");
     }
+
     function exactStateFieldValue(value, label) {
       const source = textOf(value).trim();
       const normalized = source.replace(new RegExp("^" + escapeRegExp(label) + "\\s*:\\s*", "i"), "").trim();
       return { value: normalized, changed: normalized !== source };
     }
+
     function parseTerminalCandidate(output, plan, preparedSource) {
       const strippedSource = typeof preparedSource === "string"
         ? preparedSource
@@ -32739,9 +34476,11 @@ function MCPV5Create_character_continuity() {
       }
       return { story, candidate: null, malformed: true, hadProtocol: true, reason: "The CCO operation kind was not S, N, R, or V.", raw: line(raw, 300) };
     }
+
     function targetForCode(plan, code) {
       return (plan.targets || []).find(target => target.code === code) || null;
     }
+
     function directPrivateThought(value, owner) {
       const thought = line(value, settings.MAX_STATE_VALUE_CHARS);
       if (!thought) return false;
@@ -32757,6 +34496,7 @@ function MCPV5Create_character_continuity() {
       if (/^(?:(?:the|this|that)\s+)?(?:npc|character|owner)\b/i.test(thought)) return false;
       return true;
     }
+
     function derivedStateFromTriggers(triggers) {
       const rules = triggers.map(code => TRIGGER_RULES[code]).filter(Boolean);
       const feelings = unique(rules.map(rule => rule.feeling).filter(Boolean), 60).slice(0, 2);
@@ -32770,6 +34510,7 @@ function MCPV5Create_character_continuity() {
         tension: tensions[0] || (positive && negative ? "competing impulses remain unresolved" : "")
       };
     }
+
     function targetGroundingError(candidate, target, plan) {
       const thought = line(candidate && candidate.thought, settings.MAX_STATE_VALUE_CHARS);
       if (!thought || !target) return "";
@@ -32808,6 +34549,7 @@ function MCPV5Create_character_continuity() {
       }
       return "";
     }
+
     function applyStateCandidate(owner, candidate, nextClock, plan, evidenceItems) {
       if (!owner || !candidate) return { ok: false, error: "State operation lacked its fixed owner or content." };
       const npc = CC.npcs[owner.key];
@@ -32852,6 +34594,7 @@ function MCPV5Create_character_continuity() {
         ? targetGroundingError({ ...candidate, situation }, target, plan)
         : "";
       if (groundingError) return { ok: false, error: groundingError };
+
       const citedIds = unique((Array.isArray(evidenceItems) ? evidenceItems : []).map(item => item && item.id), 20)
         .map(value => value.toUpperCase())
         .filter(value => /^E\d+$/.test(value));
@@ -32872,6 +34615,7 @@ function MCPV5Create_character_continuity() {
       const signature = experienceSignature(owner.key, target.key, situation);
       let promotedSignature = sameSituation ? priorSituation.promotedSignature : "";
       const shouldPromote = confirmations >= threshold && promotedSignature !== signature;
+
       const priorStateSnapshot = clone(npc.state);
       const priorProvenance = clone(CC.provenance);
       const priorProvenanceCreated = CC.last.provenanceCreated;
@@ -32887,7 +34631,9 @@ function MCPV5Create_character_continuity() {
         ), 500).slice(-20);
         return { ok: false, error };
       };
+
       let promotion = null;
+
       const derived = derivedStateFromTriggers(triggers);
       const changed = [];
       [["feeling", derived.feeling], ["goal", derived.goal], ["tension", derived.tension]].forEach(([field, value]) => {
@@ -32912,9 +34658,11 @@ function MCPV5Create_character_continuity() {
         targetName: storedTarget.name,
         promotedSignature
       };
+
       if (!writeStateCard(owner)) {
         return rollback("The managed State card could not be saved and verified.");
       }
+
       const stateProvenance = appendProvenanceRecord({
         prefix: "S",
         ownerKey: owner.key,
@@ -32936,6 +34684,7 @@ function MCPV5Create_character_continuity() {
       if (!stateProvenance.ok) {
         return rollback("State changed but S# provenance could not commit: " + stateProvenance.error);
       }
+
       if (shouldPromote) {
         promotion = promoteExperienceWithProvenance(owner, storedTarget, situation, plan);
         if (!promotion.ok) {
@@ -32948,6 +34697,7 @@ function MCPV5Create_character_continuity() {
           return rollback("Experience and X# committed but the promoted State marker could not be saved and verified.");
         }
       }
+
       const stateChange = unique(changed, 30).join(",") || "refreshed";
       const confirmationSummary = "Situation " + confirmations + "/" + threshold
         + (promotion ? (promotion.deduplicated ? " deduplicated in Experiences" : " promoted to Experiences") : "")
@@ -32961,6 +34711,7 @@ function MCPV5Create_character_continuity() {
         warning: validThought ? "" : "Applied trigger-derived State but ignored a missing or externally narrated Thought."
       };
     }
+
     function viewOperationModeForCandidate(candidate, target) {
       const destination = canonicalViewDestination(candidate && candidate.destination);
       if (destination === "Buried") return "Buried";
@@ -32968,6 +34719,7 @@ function MCPV5Create_character_continuity() {
       if (target && target.mode === "recovering") return "Reconciled";
       return canonicalViewOperationMode(candidate && candidate.severity);
     }
+
     function viewInterpretationKeyForCandidate(candidate, target) {
       const destination = canonicalViewDestination(candidate && candidate.destination);
       const operationMode = viewOperationModeForCandidate(candidate, target);
@@ -32976,6 +34728,7 @@ function MCPV5Create_character_continuity() {
         ? [destination, operationMode, targetMode || ""].join("|")
         : "";
     }
+
     function rawViewEvidenceSupportsCandidate(owner, target, candidate, item) {
       if (!owner || !target || !candidate || !item || !/^E\d+$/.test(textOf(item.id))) {
         return { ok: false, error: "View validation lacked a completed raw E# source." };
@@ -33035,6 +34788,7 @@ function MCPV5Create_character_continuity() {
       }
       return { ok: false, error: item.id + " did not support a recognized View destination." };
     }
+
     function citedEvidenceForOperation(owner, candidate, plan, targetKey) {
       const operationKind = keyOf(candidate && candidate.kind);
       const normalizedTarget = normalizedTargetKey(targetKey);
@@ -33090,6 +34844,7 @@ function MCPV5Create_character_continuity() {
         if (operationKind === "name" && (!eligibility || eligibility.name !== true || frozenSource.name !== true)) {
           return { ok: false, error: id + " was not supplied as Name-eligible evidence." };
         }
+
         if (id.charAt(0) === "E") {
           const item = evidenceForId(id);
           if (!item) return { ok: false, error: id + " was no longer present in the evidence ledger." };
@@ -33124,6 +34879,7 @@ function MCPV5Create_character_continuity() {
           items.push(item);
           continue;
         }
+
         if (operationKind === "relationship" && /^[SX]\d+$/.test(id)) {
           if (candidate.eventKind !== "A") {
             return { ok: false, error: id + " is derived continuity and may authorise accumulated Relationship movement only." };
@@ -33188,6 +34944,7 @@ function MCPV5Create_character_continuity() {
           });
           continue;
         }
+
         if (operationKind === "view" && /^[RX]\d+$/.test(id)) {
           const record = provenanceRecordById(id);
           if (!record || !["relationship", "experience"].includes(record.kind)) {
@@ -33266,10 +35023,12 @@ function MCPV5Create_character_continuity() {
           });
           continue;
         }
+
         return { ok: false, error: id + " was not a compatible derived source for this model-facing operation." };
       }
       return { ok: true, items };
     }
+
     function categoryDistance(left, right) {
       const leftIndex = VIEW_CATEGORY_INDEX[keyOf(left)];
       const rightIndex = VIEW_CATEGORY_INDEX[keyOf(right)];
@@ -33277,6 +35036,7 @@ function MCPV5Create_character_continuity() {
         ? Math.abs(leftIndex - rightIndex)
         : Infinity;
     }
+
     function resolveViewTarget(owner, candidate, plan) {
       const field = textOf(candidate.targetField).trim();
       const fresh = field.match(/^NEW=(.+)$/i);
@@ -33311,10 +35071,12 @@ function MCPV5Create_character_continuity() {
         ? { ok: true, target, fresh: false }
         : { ok: false, error: "The View target code was not present in the frozen owner-specific target map." };
     }
+
     function newTargetGrounded(target, evidenceItems) {
       if (!target || !target.name) return false;
       return evidenceItems.some(item => aliasMentioned(item.text, target.name));
     }
+
     function relationshipTargetGrounded(target, evidenceItems) {
       if (!target) return false;
       const items = Array.isArray(evidenceItems) ? evidenceItems : [];
@@ -33331,6 +35093,7 @@ function MCPV5Create_character_continuity() {
       const identity = character ? nameIdentityForKey("npc:" + character.key) : null;
       return !!(identity && items.some(item => identityMentioned(item.text, identity, true, CC.activeKeys)));
     }
+
     const RELATIONSHIP_GROUNDING_STOP_WORDS = new Set([
       "a", "an", "and", "are", "as", "at", "be", "because", "been", "being", "by", "for", "from",
       "has", "have", "he", "her", "hers", "him", "his", "i", "in", "into", "is", "it", "its", "me",
@@ -33339,6 +35102,7 @@ function MCPV5Create_character_continuity() {
       "relationship", "stage", "change",
       "establish", "establishes", "established", "recognize", "recognizes", "recognized", "respond", "responds"
     ]);
+
     function relationshipGroundingStem(value) {
       let token = textOf(value).toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
       if (token.length > 6 && token.endsWith("ies")) token = token.slice(0, -3) + "y";
@@ -33352,6 +35116,7 @@ function MCPV5Create_character_continuity() {
       else if (token.length > 4 && token.endsWith("s")) token = token.slice(0, -1);
       return token;
     }
+
     function relationshipGroundingTerms(value, excludedForms) {
       const excluded = new Set();
       (Array.isArray(excludedForms) ? excludedForms : []).forEach(form => {
@@ -33362,6 +35127,7 @@ function MCPV5Create_character_continuity() {
         .map(relationshipGroundingStem)
         .filter(token => token.length >= 3 && !RELATIONSHIP_GROUNDING_STOP_WORDS.has(token) && !excluded.has(token)), 80);
     }
+
     function directRelationshipEvidenceSupportsCandidate(owner, target, candidate, item) {
       if (!owner || !target || !candidate || !item || !/^E\d+$/.test(textOf(item.id))) {
         return { ok: false, error: "Direct Relationship validation lacked a completed raw E# source." };
@@ -33425,10 +35191,12 @@ function MCPV5Create_character_continuity() {
         : { ok: false, error: item.id + " did not directly establish the proposed " + candidate.field
           + " destination " + candidate.destination + "." };
     }
+
     function relationshipStageLabels() {
       return unique(RELATIONSHIP_FIELDS.flatMap(field => (RELATIONSHIP_STAGES[field] || []).map(stage => stage.label))
         .concat(["Former", "Released"]), 120).sort((left, right) => right.length - left.length);
     }
+
     function correctedRelationshipExplanation(value, actualStage) {
       let result = line(value, 2000);
       const actualKey = keyOf(actualStage);
@@ -33487,6 +35255,7 @@ function MCPV5Create_character_continuity() {
       result = result.replace(/\s{2,}/g, " ").replace(/\s+([,.;:!?])/g, "$1").trim();
       return line(result || ("The cited completed evidence changed the Relationship within the actual " + actualStage + " stage."), 2000);
     }
+
     function viewCategoryRegard(category) {
       return {
         Loves: "deeply positive regard",
@@ -33496,6 +35265,7 @@ function MCPV5Create_character_continuity() {
         Hates: "strongly negative regard"
       }[canonicalViewDestination(category)] || "durable regard";
     }
+
     function correctedViewExplanation(value, actualCategory) {
       let result = line(value, 2000);
       const regard = viewCategoryRegard(actualCategory);
@@ -33532,6 +35302,7 @@ function MCPV5Create_character_continuity() {
       result = result.replace(/\s{2,}/g, " ").replace(/\s+([,.;:!?])/g, "$1").trim();
       return line(result || ("The cited evidence supports " + regard + "."), 2000);
     }
+
     function relationshipEvidenceSupportsCandidate(owner, target, candidate, evidenceItems) {
       const items = Array.isArray(evidenceItems) ? evidenceItems : [];
       const targetForms = target && target.key === "player"
@@ -33548,6 +35319,9 @@ function MCPV5Create_character_continuity() {
           return { ok: false, error: "Direct Relationship Explanation did not describe the explicitly established "
             + candidate.field + " result." };
         }
+        // Every raw source has already passed exact owner, target, field, and destination
+        // validation. Do not reject a safe paraphrase merely because it uses a different
+        // verb from the completed direct statement.
         return { ok: true };
       }
       for (const item of items) {
@@ -33569,6 +35343,7 @@ function MCPV5Create_character_continuity() {
       }
       return { ok: true };
     }
+
     function relationshipStartingScore(field) {
       const startingLabels = {
         Role: "Emerging",
@@ -33581,10 +35356,12 @@ function MCPV5Create_character_continuity() {
         .find(item => keyOf(item.label) === keyOf(startingLabels[field]));
       return stage ? stage.midpoint : 0;
     }
+
     function mutualRoleDescription(value) {
       return /\b(?:friend(?:ship)?|employ(?:ee|er|ment)|partner(?:ship)?|romance|romantic|lover|dating|engaged|fianc(?:e|ee)|marriage|married|spouse|husband|wife)\b/i
         .test(textOf(value));
     }
+
     function nameSubjectForCandidate(owner, candidate, plan) {
       const target = targetForCode(plan, candidate.subjectCode);
       if (!target || target.nameSubject !== true) {
@@ -33600,6 +35377,7 @@ function MCPV5Create_character_continuity() {
         ? { ok: true, target, identity }
         : { ok: false, error: "Name Subject was not Player or a registered NPC identity." };
     }
+
     function resolveNameUseField(owner, value, plan) {
       const raw = line(value, 1000);
       const normalized = nameKeyOf(raw);
@@ -33625,6 +35403,7 @@ function MCPV5Create_character_continuity() {
       }
       return { ok: true, text: permissions.map(permission => permission.name).join(", "), permissions };
     }
+
     function formatNameProgress(progress) {
       const threshold = settings.NAME_ESTABLISHMENT_CONFIRMATIONS;
       return (Array.isArray(progress) ? progress : [])
@@ -33632,6 +35411,7 @@ function MCPV5Create_character_continuity() {
         .map(item => item.name + " " + item.count + "/" + threshold)
         .join("; ");
     }
+
     function permissionText(permissions) {
       const list = Array.isArray(permissions) ? permissions : [];
       if (list.some(permission => permission.key === "general")) return "General";
@@ -33639,6 +35419,7 @@ function MCPV5Create_character_continuity() {
       return list.filter(permission => permission.key !== "none")
         .map(permission => permission.name).join(", ");
     }
+
     function addPlannedNameRecord(identity, pages, record) {
       if (!record) return { ok: false, error: "The Alias record could not be formed safely." };
       let page = pages.find(item => item.movable && !item.remove);
@@ -33653,6 +35434,7 @@ function MCPV5Create_character_continuity() {
       page.dirty = true;
       return { ok: true, page, record };
     }
+
     function setPlannedNameRecord(identity, found, status, use, progress, reason) {
       if (!found || !found.page.movable || !found.record.writable || Object.keys(found.record.fieldUnsafe).length) {
         return { ok: false, error: "The Alias record was structurally or field-level unsafe." };
@@ -33669,6 +35451,7 @@ function MCPV5Create_character_continuity() {
       found.page.dirty = true;
       return { ok: true, record: found.record };
     }
+
     function nameEvidenceGrounded(owner, identity, alias, transition, replacedAlias, evidenceItems) {
       const items = Array.isArray(evidenceItems) ? evidenceItems : [];
       if (!items.length || !items.some(item => aliasMentioned(item.text, alias))) return false;
@@ -33677,6 +35460,7 @@ function MCPV5Create_character_continuity() {
       if (identity.character.key === owner.key) return true;
       return items.some(item => identityMentioned(item.text, identity, true, CC.activeKeys));
     }
+
     function applyNameCandidate(owner, candidate, plan, evidenceItems) {
       const subject = nameSubjectForCandidate(owner, candidate, plan);
       if (!subject.ok) return subject;
@@ -33699,6 +35483,7 @@ function MCPV5Create_character_continuity() {
       if (!nameEvidenceGrounded(owner, identity, candidate.alias, candidate.transition, candidate.replacedAlias, evidenceItems)) {
         return { ok: false, error: "The exact Alias or its identity owner was not grounded in the cited completed evidence." };
       }
+
       return transactNames(identity, ({ pages }) => {
         const aliasResult = plannedNameAlias(pages, candidate.alias);
         if (!aliasResult.ok) return aliasResult;
@@ -33706,6 +35491,7 @@ function MCPV5Create_character_continuity() {
         const oldRecord = found ? copyNameItem(found.record) : null;
         const oldStatus = oldRecord ? oldRecord.status : "absent";
         const direct = candidate.transition !== "Observed";
+
         if (candidate.transition === "Observed") {
           if (found && ["Retired", "Rejected"].includes(found.record.status)) {
             return { ok: false, error: "A Retired or Rejected Alias requires explicit Reactivated evidence." };
@@ -33819,6 +35605,7 @@ function MCPV5Create_character_continuity() {
             if (!updated.ok) return updated;
           }
         }
+
         const nextRecord = found && found.record;
         if (!nextRecord) return { ok: false, error: "The Name transition produced no Alias record." };
         if (oldRecord && nameRecordSignature(oldRecord) === nameRecordSignature(nextRecord)
@@ -33837,6 +35624,7 @@ function MCPV5Create_character_continuity() {
         };
       });
     }
+
     function baseRelationshipRecord(target) {
       const record = {
         kind: "record",
@@ -33859,6 +35647,7 @@ function MCPV5Create_character_continuity() {
       };
       return reparsePlannedRelationshipRecord(record);
     }
+
     function relationshipStoredValue(field, destination, score, description) {
       const safeDescription = line(description, 2000);
       if (field === "Role" && destination === "Former") {
@@ -33868,10 +35657,12 @@ function MCPV5Create_character_continuity() {
       if (!stage) return "";
       return score + " (" + stage.label + ")" + (safeDescription ? " — " + safeDescription : "");
     }
+
     function relationshipScoreLabel(parsed) {
       if (!parsed || parsed.blank) return "blank";
       return parsed.special || textOf(parsed.score);
     }
+
     function applyRelationshipCandidate(owner, candidate, plan, evidenceItems) {
       if (!owner || !candidate) return { ok: false, error: "Relationship operation lacked its fixed owner or content." };
       const target = targetForCode(plan, candidate.targetCode);
@@ -33913,6 +35704,7 @@ function MCPV5Create_character_continuity() {
         : runtime.relationshipPace;
       const magnitude = (candidate.eventKind === "D" ? pace.direct : pace.accumulated)
         * Math.max(1, (Array.isArray(evidenceItems) ? evidenceItems.length : 0));
+
       return transactRelationships(owner, ({ pages }) => {
         const targetResult = plannedRelationshipTarget(pages, target.key);
         if (!targetResult.ok) return targetResult;
@@ -33930,6 +35722,7 @@ function MCPV5Create_character_continuity() {
         if (!prior.safe) {
           return { ok: false, error: candidate.field + " is unsafe and must be repaired before that field can update." };
         }
+
         const oldStage = prior.special || prior.stage || "blank";
         const oldScoreLabel = relationshipScoreLabel(prior);
         const priorStoredValue = canonicalRelationshipManagedValue(
@@ -33946,6 +35739,7 @@ function MCPV5Create_character_continuity() {
           && (candidate.field === "Role" || candidate.field === "Boundaries");
         const directResolution = candidate.eventKind === "D"
           && candidate.field === "Conflict" && candidate.destination === "Clear";
+
         if (candidate.field === "Boundaries" && destination.special === "Released") {
           nextValue = "";
           nextStage = "Released";
@@ -34012,6 +35806,7 @@ function MCPV5Create_character_continuity() {
             nextValue = relationshipStoredValue(candidate.field, nextStage, nextScore, nextDescription);
           }
         }
+
         if (keyOf(record.values[candidate.field]) === keyOf(nextValue)) {
           if (!targetResult.found) removePlannedRelationshipItem(found.page, record);
           return { ok: false, unchanged: true, error: "" };
@@ -34095,6 +35890,7 @@ function MCPV5Create_character_continuity() {
         };
       });
     }
+
     function captureRelationshipProvenanceTransaction() {
       return {
         cards: captureManagedRelationshipsCards(),
@@ -34105,6 +35901,7 @@ function MCPV5Create_character_continuity() {
         useDiagnostics: clone(CC.last.relationshipUseDiagnostics || [])
       };
     }
+
     function restoreRelationshipProvenanceTransaction(snapshot, reason) {
       if (!snapshot) return false;
       const cardsRestored = restoreManagedRelationshipsCards(snapshot.cards);
@@ -34119,6 +35916,7 @@ function MCPV5Create_character_continuity() {
       refreshProvenanceActivity();
       return cardsRestored;
     }
+
     function relationshipEventSignature(owner, result) {
       if (!owner || !result) return "";
       return line(JSON.stringify([
@@ -34135,6 +35933,7 @@ function MCPV5Create_character_continuity() {
         result.managedSignature
       ]), 500);
     }
+
     function commitRelationshipProvenance(owner, result, plan) {
       if (!owner || !result || !result.ok || !result.managedSignature) {
         return { ok: false, error: "The committed Relationship result lacked provenance metadata." };
@@ -34150,6 +35949,7 @@ function MCPV5Create_character_continuity() {
       }
       const eventSignature = relationshipEventSignature(owner, result);
       if (!eventSignature) return { ok: false, error: "The Relationship provenance signature could not be created." };
+
       const provenance = appendProvenanceRecord({
         prefix: "R",
         ownerKey: owner.key,
@@ -34179,6 +35979,7 @@ function MCPV5Create_character_continuity() {
       if (!provenance.ok) {
         return { ok: false, error: "R# provenance could not commit: " + provenance.error };
       }
+
       for (const use of result.narrowUses || []) {
         const sourceRecord = provenanceRecordById(use.sourceId);
         if (!sourceRecord || !["state", "experience"].includes(sourceRecord.kind)) {
@@ -34200,6 +36001,7 @@ function MCPV5Create_character_continuity() {
           return { ok: false, error: "Narrow use signature for " + use.sourceId + " could not commit exactly once." };
         }
       }
+
       refreshProvenanceActivity();
       const committed = provenanceRecordById(provenance.record.id);
       if (!committed || !committed.active || !managedSignatureStillValid(committed)) {
@@ -34220,6 +36022,7 @@ function MCPV5Create_character_continuity() {
       ), 500).slice(-20);
       return { ok: true, record: committed };
     }
+
     function captureViewProvenanceTransaction() {
       return {
         cards: captureManagedViewsCards(),
@@ -34232,6 +36035,7 @@ function MCPV5Create_character_continuity() {
         transactionDiagnostics: clone(CC.viewTransactionDiagnostics || [])
       };
     }
+
     function restoreViewProvenanceTransaction(snapshot, reason) {
       if (!snapshot) return false;
       const cardsRestored = restoreManagedViewsCards(snapshot.cards);
@@ -34252,6 +36056,7 @@ function MCPV5Create_character_continuity() {
       refreshProvenanceActivity();
       return cardsRestored;
     }
+
     function viewEventSignature(owner, result) {
       if (!owner || !result) return "";
       return line(JSON.stringify([
@@ -34269,6 +36074,7 @@ function MCPV5Create_character_continuity() {
         result.managedSignature
       ]), 500);
     }
+
     function finalizeViewMutationResult(owner, target, candidate, evidenceItems, priorState, result) {
       if (!result || !result.ok) return result;
       refreshViewsStore(false);
@@ -34338,6 +36144,7 @@ function MCPV5Create_character_continuity() {
         derivedUseSignatures: narrowUses.map(item => item.signature)
       };
     }
+
     function commitViewProvenance(owner, result, plan) {
       if (!owner || !result || !result.ok || !result.managedSignature) {
         return { ok: false, error: "The committed View result lacked provenance metadata." };
@@ -34355,6 +36162,7 @@ function MCPV5Create_character_continuity() {
       }
       const eventSignature = viewEventSignature(owner, result);
       if (!eventSignature) return { ok: false, error: "The View provenance signature could not be created." };
+
       const provenance = appendProvenanceRecord({
         prefix: "V",
         ownerKey: owner.key,
@@ -34381,6 +36189,7 @@ function MCPV5Create_character_continuity() {
       if (!provenance.ok) {
         return { ok: false, error: "V# provenance could not commit: " + provenance.error };
       }
+
       for (const use of result.narrowUses || []) {
         const sourceRecord = provenanceRecordById(use.sourceId);
         if (!sourceRecord || !["relationship", "experience"].includes(sourceRecord.kind)) {
@@ -34404,6 +36213,7 @@ function MCPV5Create_character_continuity() {
           return { ok: false, error: "Narrow View-use signature for " + use.sourceId + " could not commit exactly once." };
         }
       }
+
       refreshProvenanceActivity();
       const committed = provenanceRecordById(provenance.record.id);
       if (!committed || !committed.active || !managedSignatureStillValid(committed)) {
@@ -34430,6 +36240,7 @@ function MCPV5Create_character_continuity() {
       ), 300).slice(-30);
       return { ok: true, record: committed };
     }
+
     function baseViewRecord(target, category, explanation, buried) {
       return {
         targetKey: target.key,
@@ -34446,6 +36257,7 @@ function MCPV5Create_character_continuity() {
         writable: true
       };
     }
+
     function applyViewCandidate(owner, candidate, plan, evidenceItems) {
       const resolved = resolveViewTarget(owner, candidate, plan);
       if (!resolved.ok) return resolved;
@@ -34465,6 +36277,7 @@ function MCPV5Create_character_continuity() {
         };
       }
       const priorState = viewManagedStateSnapshot(owner.key, target.key);
+
       if (candidate.destination === "Buried") {
         if (!activeRecord) return { ok: false, error: "Burial required one valid active View record." };
         if (buriedRecord) return { ok: false, error: "A prior buried View for this owner–target must be recovered and reconciled before another burial." };
@@ -34479,6 +36292,7 @@ function MCPV5Create_character_continuity() {
           ? finalizeViewMutationResult(owner, target, candidate, evidenceItems, priorState, result)
           : result;
       }
+
       if (candidate.destination === "Recovered") {
         if (!buriedRecord) return { ok: false, error: "Recovery required one valid buried View record." };
         if (activeRecord) {
@@ -34507,6 +36321,7 @@ function MCPV5Create_character_continuity() {
           ? finalizeViewMutationResult(owner, target, candidate, evidenceItems, priorState, result)
           : result;
       }
+
       if (!categoryDestination) return { ok: false, error: "The View destination was not a supported category or memory operation." };
       const marker = recoveringMarker(owner.key, target.key);
       if (target.mode === "recovering" || marker) {
@@ -34532,9 +36347,11 @@ function MCPV5Create_character_continuity() {
           ? finalizeViewMutationResult(owner, target, candidate, evidenceItems, priorState, result)
           : result;
       }
+
       if (target.mode === "buried") {
         return { ok: false, error: "A buried target code authorizes recovery, not an active category update." };
       }
+
       if (activeRecord) {
         if (activeRecord.category === candidate.destination && keyOf(activeRecord.explanation) === keyOf(candidate.explanation)) {
           return { ok: false, unchanged: true, error: "" };
@@ -34557,6 +36374,7 @@ function MCPV5Create_character_continuity() {
           ? finalizeViewMutationResult(owner, target, candidate, evidenceItems, priorState, result)
           : result;
       }
+
       const result = transactViews(owner, ({ activePages }) => {
         const record = baseViewRecord(target, candidate.destination, candidate.explanation, false);
         const placed = placePlannedRecord(owner, false, activePages, record, 0);
@@ -34568,6 +36386,7 @@ function MCPV5Create_character_continuity() {
         ? finalizeViewMutationResult(owner, target, candidate, evidenceItems, priorState, result)
         : result;
     }
+
     function resetLastForContext() {
       Object.assign(CC.last, {
         warning: "", error: "", rulesTokens: 0, outerTokens: 0, innerTokens: 0, stateTokens: 0,
@@ -34582,6 +36401,7 @@ function MCPV5Create_character_continuity() {
         nameDiagnostics: [], relationshipSourceDiagnostics: [], viewSourceDiagnostics: [], modelOmitted: []
       });
     }
+
     function buildContext() {
       resetLastForContext();
       refreshViewsStore(false);
@@ -34630,6 +36450,7 @@ function MCPV5Create_character_continuity() {
       }
       CC.activeKeys = active.map(character => character.key);
       CC.focusKey = focus.key;
+
       const scoringFrozenEvidenceIds = plan.retry && Array.isArray(plan.retryEvidenceIds) && plan.retryEvidenceIds.length
         ? plan.retryEvidenceIds
         : (plan.opportunityCounted && Array.isArray(plan.evidenceIds) ? plan.evidenceIds : []);
@@ -34677,6 +36498,7 @@ function MCPV5Create_character_continuity() {
       );
       const scoringSources = scoringEvidence.concat(scoringDerivedRelationships, scoringDerivedViews);
       freezeOperationSelection(plan, focus, scoringTargets, scoringSources, plan.inputEvidenceId || "", recent);
+
       const attempt = assembleContext(originalText, active, focus, currentInput, recent, plan);
       if (!attempt.ok) {
         CC.last.context = "Distinct portrayal could not fit safely: " + attempt.reason;
@@ -34686,6 +36508,7 @@ function MCPV5Create_character_continuity() {
         CC.modelActiveKeys = [];
         return originalText;
       }
+
       plan.task = attempt.taskDelivered ? "operation" : (CC.recoveryPending ? "recovery" : "none");
       plan.taskDelivered = attempt.taskDelivered;
       plan.ownerKey = focus.key;
@@ -34764,6 +36587,7 @@ function MCPV5Create_character_continuity() {
         CC.last.operationDecay = decay.summary;
       }
       CC.modelActiveKeys = plan.modelActiveKeys.slice();
+
       Object.assign(CC.last, {
         rulesTokens: attempt.rulesTokens,
         outerTokens: attempt.outerTokens,
@@ -34805,9 +36629,11 @@ function MCPV5Create_character_continuity() {
           : ".");
       return attempt.text;
     }
+
     function candidateSourceLabel(sourceIds) {
       return (Array.isArray(sourceIds) ? sourceIds : []).join(",") || "no sources";
     }
+
     function operationOutcomeIdentity(owner, plan, parsedCandidate, result) {
       const selected = plan && plan.selectedCandidate && typeof plan.selectedCandidate === "object"
         ? plan.selectedCandidate
@@ -34847,6 +36673,7 @@ function MCPV5Create_character_continuity() {
         evidenceSignature: line(plan && plan.selectedEvidenceSignature || selected.evidenceSignature, 500)
       };
     }
+
     function applyOperationOutcomeDrain(owner, plan, parsedCandidate, result, outcome) {
       const normalizedOutcome = keyOf(outcome);
       const points = {
@@ -34882,6 +36709,7 @@ function MCPV5Create_character_continuity() {
       CC.operationState.drains = others.concat(record)
         .sort((left, right) => left.updatedOpportunity - right.updatedOpportunity)
         .slice(-settings.MAX_OPERATION_DRAIN_RECORDS);
+
       if (!CC.operationState.owners[owner.key]) CC.operationState.owners[owner.key] = blankOwnerOperationState();
       const meter = CC.operationState.owners[owner.key][identity.kind] || blankOperationMeter();
       meter.gain = Math.max(0, Number(plan.selectedGain) || 0);
@@ -34892,6 +36720,7 @@ function MCPV5Create_character_continuity() {
       meter.lastTargetKey = identity.targetKey;
       meter.lastField = identity.field;
       CC.operationState.owners[owner.key][identity.kind] = normalizeOperationMeter(meter);
+
       const summary = operationKindLabel(identity.kind) + " " + normalizedOutcome
         + " drain " + priorValue + " + " + Math.max(0, Number(points) || 0)
         + (repeated ? " + repeated " + repeated : "") + " = " + record.value
@@ -34900,6 +36729,7 @@ function MCPV5Create_character_continuity() {
       CC.last.operationDrainChange = summary;
       return { record, priorValue, base: points, repeated, summary };
     }
+
     function processOutput(outputValue) {
       const plan = CC.currentPlan || { task: "none", taskDelivered: false, activeKeys: CC.activeKeys || [] };
       if (plan.opening) {
@@ -34908,6 +36738,7 @@ function MCPV5Create_character_continuity() {
         plan.completed = true;
         return " ";
       }
+
       const rawFallback = stripOperationFallbackBlocks(outputValue, plan, true);
       const instructionEcho = stripOperationInstructionEchoes(rawFallback.text, plan);
       const residualFallback = stripOperationFallbackBlocks(instructionEcho.text, plan, false);
@@ -34961,6 +36792,7 @@ function MCPV5Create_character_continuity() {
       const story = parsed.story.trim();
       if (!hasCompleteStory(story)) {
         const owner = characters.find(character => character.key === plan.ownerKey) || null;
+
         CC.recoveryPending = true;
         CC.last.candidate = parsed.unauthorized
           ? "unauthorized stripped"
@@ -34971,6 +36803,7 @@ function MCPV5Create_character_continuity() {
                 ? "normalized rejected: no complete story"
                 : "rejected: no complete story")
               : "absent: no complete story"));
+
         CC.last.operationOutcome = "None";
         CC.last.operationDrainChange = "No drain change";
         if (owner && plan.taskDelivered) {
@@ -34979,10 +36812,12 @@ function MCPV5Create_character_continuity() {
             : (parsed.unauthorized || parsed.candidate ? "rejected" : "unchanged");
           applyOperationOutcomeDrain(owner, plan, parsed.candidate, null, outcome);
         }
+
         CC.last.output = "No complete story survived; no operation was applied and prose-only recovery remains pending.";
         CC.last.error = "The response did not finish complete story prose.";
         return " ";
       }
+
       const nextGeneration = CC.visibleGenerationCount + 1;
       const nextStateClock = CC.stateClock + 1;
       const storyTimeJump = TIME_JUMP.test(story);
@@ -34991,6 +36826,7 @@ function MCPV5Create_character_continuity() {
       const focus = characters.find(character => character.key === plan.focusKey) || owner || null;
       let result = null;
       let evidenceResult = null;
+
       if (parsed.unauthorized) {
         CC.last.candidate = "unauthorized stripped";
         CC.last.error = parsed.reason || "An unauthorized CCO record was stripped while complete story survived.";
@@ -35122,6 +36958,7 @@ function MCPV5Create_character_continuity() {
           }
         }
       }
+
       if (result) {
         if (result.ok) {
           CC.last.candidate = normalizedCandidate ? "normalized accepted" : "accepted";
@@ -35151,6 +36988,7 @@ function MCPV5Create_character_continuity() {
           : "CC output residue was stripped before the valid CCO record and story were processed."]
           .filter(Boolean).join(" ");
       }
+
       CC.visibleGenerationCount = nextGeneration;
       CC.stateClock = nextStateClock;
       expireTemporaryState(CC.stateClock);
@@ -35176,6 +37014,7 @@ function MCPV5Create_character_continuity() {
           : (CC.last.candidate === "not requested" ? "no operation was scheduled." : "no continuity operation was applied."));
       return story;
     }
+
     function stateStatus(character) {
       const state = normalizeState(CC.npcs[character.key] && CC.npcs[character.key].state, CC.stateClock);
       const present = [["T", "thought"], ["F", "feeling"], ["G", "goal"], ["X", "tension"], ["S", "situation"]]
@@ -35189,6 +37028,7 @@ function MCPV5Create_character_continuity() {
         + (state.situation.value ? " {Situation " + state.situation.confirmations + "/" + threshold
           + (state.situation.promotedSignature ? ", promoted" : "") + "}" : "");
     }
+
     function castStatus(character) {
       const cast = castFor(character);
       const label = cast.status === "main" ? "Main" : "Side";
@@ -35196,11 +37036,13 @@ function MCPV5Create_character_continuity() {
         ? " inactive " + cast.inactiveStreak + "/" + runtime.mainInactivityLimit
         : " interactions " + cast.interactionProgress + "/" + runtime.sidePromotionInteractions);
     }
+
     function outerStatus(character) {
       const maximum = settings.MAX_OUTER_CARD_CHARS;
       const warning = character.outerWarnings.length ? " [" + character.outerWarnings.join(" ") + "]" : " ready";
       return character.name + " " + character.outerRetainedChars + "/" + maximum + warning;
     }
+
     function innerStatus(character) {
       if (!character.innerCard) {
         return character.name + " missing ["
@@ -35210,6 +37052,7 @@ function MCPV5Create_character_continuity() {
       const warning = character.innerWarnings.length ? " [" + character.innerWarnings.join(" ") + "]" : " ready";
       return character.name + " " + character.innerRetainedChars + "/" + maximum + warning;
     }
+
     function viewsStatus(character) {
       const owner = viewsForOwner(character.key);
       const activeCount = owner ? owner.activeRecords.length : 0;
@@ -35217,12 +37060,14 @@ function MCPV5Create_character_continuity() {
       const recoveringCount = Object.values(CC.recoveringViews).filter(marker => marker && marker.ownerKey === character.key).length;
       return character.name + " active " + activeCount + ", buried " + buriedCount + ", recovering " + recoveringCount;
     }
+
     function relationshipsStatus(character) {
       const owner = relationshipsForOwner(character.key);
       const records = owner ? owner.records.filter(record => !record.duplicate).length : 0;
       const pages = owner ? owner.pages.length : 0;
       return character.name + " " + records + " records / " + pages + " pages";
     }
+
     function namesStatus(identity) {
       const identityData = namesForIdentity(identity.key);
       const records = identityData ? identityData.records.filter(record => !record.duplicate && !record.conflict) : [];
@@ -35231,6 +37076,7 @@ function MCPV5Create_character_continuity() {
       return identity.headerOwner + " " + records.length + " aliases (" + counts + ") / "
         + (identityData ? identityData.pages.length : 0) + " pages";
     }
+
     function experiencesStatus(character) {
       const owner = experiencesForOwner(character.key);
       const records = owner ? owner.records.filter(record => !record.duplicate).length : 0;
@@ -35238,6 +37084,7 @@ function MCPV5Create_character_continuity() {
       const safe = owner ? owner.contextRecords.length : 0;
       return character.name + " " + records + " records, " + pages + " pages, " + safe + " context-safe";
     }
+
     function pendingEvidenceStatus(character) {
       const recent = CC.currentPlan && typeof CC.currentPlan.recentStory === "string"
         ? CC.currentPlan.recentStory
@@ -35259,6 +37106,8 @@ function MCPV5Create_character_continuity() {
       return character.name + " " + eligible.length + " pending, oldest durable age " + oldest + "/"
         + Math.max(settings.VIEW_EVIDENCE_OPPORTUNITIES, settings.RELATIONSHIP_EVIDENCE_OPPORTUNITIES, settings.NAME_EVIDENCE_OPPORTUNITIES);
     }
+
+
     function derivedRelationshipSources(plan) {
       const source = plan && typeof plan === "object" && !Array.isArray(plan) ? plan : {};
       return (Array.isArray(source.sourcePacket) ? source.sourcePacket : []).filter(item => {
@@ -35266,6 +37115,7 @@ function MCPV5Create_character_continuity() {
         return !!(id && /^[SX]/.test(id) && item.relationship === true);
       });
     }
+
     function derivedRelationshipSourceSummary(plan) {
       const derived = derivedRelationshipSources(plan);
       if (!derived.length) return "None";
@@ -35273,9 +37123,11 @@ function MCPV5Create_character_continuity() {
         + ((source.allowedFields || []).join("/") || "no fields")
         + "; gain " + Math.max(0, Number(source.gain) || 0) + "]").join(", ");
     }
+
     function derivedRelationshipSourcesSupplied(plan) {
       return derivedRelationshipSources(plan).length > 0;
     }
+
     function derivedViewSources(plan) {
       const source = plan && typeof plan === "object" && !Array.isArray(plan) ? plan : {};
       return (Array.isArray(source.sourcePacket) ? source.sourcePacket : []).filter(item => {
@@ -35283,6 +37135,7 @@ function MCPV5Create_character_continuity() {
         return !!(id && ["R", "X"].includes(id.charAt(0)) && item.view === true);
       });
     }
+
     function derivedViewSourceSummary(plan) {
       const derived = derivedViewSources(plan);
       if (!derived.length) return "None";
@@ -35291,9 +37144,11 @@ function MCPV5Create_character_continuity() {
         + "; destinations " + ((source.allowedDestinations || []).join("/") || "model-selected")
         + "; modes " + ((source.allowedModes || []).join("/") || "model-selected") + "]").join(", ");
     }
+
     function derivedViewSourcesSupplied(plan) {
       return derivedViewSources(plan).length > 0;
     }
+
     function provenanceStatusSnapshot() {
       refreshProvenanceActivity();
       const counts = {};
@@ -35316,6 +37171,7 @@ function MCPV5Create_character_continuity() {
         .filter(use => use.kind === "view").map(use => use.signature)).size;
       return { counts, latest, relationshipUses, viewUses };
     }
+
     function provenanceDebugRows() {
       const snapshot = provenanceStatusSnapshot();
       const rows = [
@@ -35391,6 +37247,7 @@ function MCPV5Create_character_continuity() {
       });
       return rows;
     }
+
     function selectedOperationStatus(plan) {
       const source = plan && typeof plan === "object" && !Array.isArray(plan) ? plan : {};
       if (source.operationSelectionFrozen !== true) return "Not scored";
@@ -35399,6 +37256,7 @@ function MCPV5Create_character_continuity() {
         + Math.max(0, Number(source.selectedDrain) || 0) + " | net "
         + (Number(source.selectedNet) || 0);
     }
+
     function operationCandidateDebugRows(plan) {
       const source = plan && typeof plan === "object" && !Array.isArray(plan) ? plan : {};
       if (source.operationSelectionFrozen !== true) return ["Operation selection: Not scored"];
@@ -35421,9 +37279,11 @@ function MCPV5Create_character_continuity() {
       rows.push("Operation selection reasons: " + ((source.selectionReasons || []).join("; ") || "None"));
       return rows;
     }
+
     function debugPageTitle(page) {
       return settings.DEBUG_TITLE + (page > 1 ? " " + page : "");
     }
+
     function debugTitlePage(title) {
       const source = line(title, 260);
       if (source === settings.DEBUG_TITLE) return 1;
@@ -35432,6 +37292,7 @@ function MCPV5Create_character_continuity() {
       const page = Number(match[1]);
       return Number.isSafeInteger(page) && page >= 2 ? page : 0;
     }
+
     function debugPageCards() {
       return currentCardCatalog().records.map(record => ({
         card: record.card,
@@ -35441,11 +37302,13 @@ function MCPV5Create_character_continuity() {
         .filter(item => item.page > 0)
         .sort((left, right) => left.page - right.page || left.index - right.index);
     }
+
     function splitOversizeDebugText(value, maximum, continuationPrefix) {
       const source = line(value, 100000);
       const limit = Math.max(40, Number(maximum) || settings.MAX_DEBUG_CARD_CHARS);
       if (!source) return [];
       if (source.length <= limit) return [source];
+
       const prefix = line(continuationPrefix, Math.floor(limit / 2));
       const parts = [];
       let remaining = source;
@@ -35466,10 +37329,12 @@ function MCPV5Create_character_continuity() {
       }
       return parts;
     }
+
     function splitDebugRow(value) {
       const source = line(value, 100000);
       const maximum = settings.MAX_DEBUG_CARD_CHARS;
       if (!source || source.length <= maximum) return source ? [source] : [];
+
       const labelMatch = source.match(/^([^:]{1,120}:)\s*(.*)$/);
       const label = labelMatch ? labelMatch[1] : "Debug:";
       const body = labelMatch ? labelMatch[2] : source;
@@ -35477,6 +37342,7 @@ function MCPV5Create_character_continuity() {
       if (!separator) {
         return splitOversizeDebugText(source, maximum, label + " (continued): ");
       }
+
       const items = body.split(separator).map(item => item.trim()).filter(Boolean);
       const rows = [];
       let current = label;
@@ -35503,6 +37369,7 @@ function MCPV5Create_character_continuity() {
       if (current && (current !== label || continued)) rows.push(current);
       return rows;
     }
+
     function paginateDebugRows(rows) {
       const maximum = settings.MAX_DEBUG_CARD_CHARS;
       const normalized = [];
@@ -35512,6 +37379,7 @@ function MCPV5Create_character_continuity() {
           if (item) normalized.push(item);
         });
       });
+
       const pages = [];
       let current = [];
       let currentLength = 0;
@@ -35528,6 +37396,7 @@ function MCPV5Create_character_continuity() {
       if (current.length) pages.push(current.join("\n"));
       return pages.length ? pages : ["Debug information is currently unavailable."];
     }
+
     function removeAllDebugPages() {
       try {
         removeCards(debugPageCards().map(item => item.card));
@@ -35535,6 +37404,7 @@ function MCPV5Create_character_continuity() {
         debug("Could not remove Debug pages: " + error.message);
       }
     }
+
     function writeDebugPages(rows) {
       try {
         const entries = paginateDebugRows(rows);
@@ -35550,6 +37420,7 @@ function MCPV5Create_character_continuity() {
           if (saved) keptCards.push(saved);
           else allSaved = false;
         });
+
         if (!allSaved) return false;
         const stale = debugPageCards().filter(item => !keptCards.some(kept => cardIndex(kept) === cardIndex(item.card)));
         removeCards(stale.map(item => item.card));
@@ -35559,6 +37430,7 @@ function MCPV5Create_character_continuity() {
         return false;
       }
     }
+
     function writeStatusCard() {
       if (!runtime.debug) removeAllDebugPages();
       const rosterSlots = activeNpcRosterStatus();
@@ -35628,6 +37500,7 @@ function MCPV5Create_character_continuity() {
         "Version: " + settings.VERSION
       ].join("\n");
       upsertCard(settings.STATUS_TITLE, entry);
+
       if (!runtime.debug) return;
       const debugRows = [
         "Last task / owner: " + CC.last.task + " / " + (CC.last.owner || "None"),
@@ -35733,56 +37606,66 @@ function MCPV5Create_character_continuity() {
         !repeatedPriorityLabels.some(label => textOf(row).startsWith(label))
       )));
     }
+
     if (hook === "input") {
       beginInput(originalText);
       writeAllStateCards();
       writeStatusCard();
       return finish(originalText);
     }
+
     if (hook === "context") {
       const result = buildContext();
       writeAllStateCards();
       writeStatusCard();
       return finish(result);
     }
+
     if (hook === "output") {
       const result = processOutput(originalText);
       writeAllStateCards();
       writeStatusCard();
       return finish(result);
     }
+
     writeStatusCard();
     return finish(originalText);
   }
+
   function run(tab) {
     if (tab === "input") {
       return (function () {
         const modifier = (text) => {
-          return { text: CharacterContinuity("input", text) }
-        }
+          return { text: CharacterContinuity("input", text) };
+        };
+
         return modifier(text);
       })();
     }
     if (tab === "context") {
       return (function () {
         const modifier = (text) => {
-          return { text: CharacterContinuity("context", text) }
-        }
+          return { text: CharacterContinuity("context", text) };
+        };
+
         return modifier(text);
       })();
     }
     if (tab === "output") {
       return (function () {
         const modifier = (text) => {
-          return { text: CharacterContinuity("output", text) }
-        }
+          return { text: CharacterContinuity("output", text) };
+        };
+
         return modifier(text);
       })();
     }
     return { text: MCPV5SafeText(globalThis.text, "\u200B") };
   }
+
   return { run };
 }
+
 const MCPV5_FACTORIES = {
   inner_package: MCPV5Create_inner_package,
   living_characters: MCPV5Create_living_characters,
@@ -35916,7 +37799,7 @@ function MCPV5RunProfile(id, tab, incomingText, plan) {
       MCPV5Name(id) + " / " + tab + " / " +
       String(error && error.message ? error.message : error)
     );
-    log("MCP V5.3.0 module error:", MCPV5Name(id), tab, error);
+    log("MCP V5.3.1 module error:", MCPV5Name(id), tab, error);
     return { text: original, __mcpOk: false };
   } finally {
     MCPV5RestoreModuleGlobals(globalSnapshot);
@@ -36160,6 +38043,7 @@ function MCPV5Run(tab, incomingText) {
       const protocolSet = new Set([
         "inner_self",
         "auto_cards",
+        "living_characters",
         "story_arc_engine",
         "character_continuity"
       ]);
@@ -36285,5 +38169,5 @@ function MCPV5Run(tab, incomingText) {
 try {
   MCPV5SyncControls();
 } catch (error) {
-  log("MCP V5.3.0 initialization error:", error);
+  log("MCP V5.3.1 initialization error:", error);
 }
