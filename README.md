@@ -4,6 +4,16 @@
 
 # MASTER MERGED SCRIPT V4
 
+# MASTER MERGED SCRIPT V5
+
+<details>
+<summary><b>(click to expand)</b></summary>
+
+### 5.3.0
+- Version 5.3.0 is now in the src-V5 folder for testing. 
+
+</details>
+
 ---
 
 ## TLDR
@@ -30,6 +40,7 @@ FULL DISCLAIMER: Enabling all scripts, at the same time, CAN and/or WILL cause u
 | **Narrative Guidance Overhaul (NGO)** | @Purplejump |
 | **Realmheart** | @itsBrazyy |
 | **Character-Continuity (CC)** | @AzuretheWitch |
+| **Calendar & Event System (CES)** | @LeCroc |
 
 
 ## Install Guide for Scenarios
@@ -139,6 +150,7 @@ All adventures played from your scenario will now include Master Merged Script V
 - [Narrative Guidance Overhaul (NGO)](https://discord.com/channels/903327676884979802/1380157986709962772)
 - [RealmHeart](https://discord.com/channels/903327676884979802/1493354358476242971)
 - [Character-Continuity (CC)](https://discord.com/channels/903327676884979802/1525990165166686218)
+- [Calendar & Event System (CES)](https://discord.com/channels/903327676884979802/1521702669381533766)
 
 </details>
 
@@ -148,6 +160,10 @@ All adventures played from your scenario will now include Master Merged Script V
 
 <details>
 <summary><b>(click to expand)</b></summary>
+
+### 4.0.1
+- Added Calendar & Event System to the Collection
+- Attributed the appropriate credit to Original Creator
 
 ### 4.0
 - Full Release
