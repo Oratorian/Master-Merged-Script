@@ -45,6 +45,8 @@ FULL DISCLAIMER: Enabling all scripts, at the same time, CAN and/or WILL cause u
 | **Realmheart** | @itsBrazyy |
 | **Character-Continuity (CC)** | @AzuretheWitch |
 | **Calendar & Event System (CES)** | @LeCroc |
+| **World Time Generator (WTG)** | @Aness (helpfulduckie) |
+| **Utility Scripts Collection (USC)** | @Intask |
 
 
 ## Install Guide for Scenarios
@@ -155,6 +157,8 @@ All adventures played from your scenario will now include Master Merged Script V
 - [RealmHeart](https://discord.com/channels/903327676884979802/1493354358476242971)
 - [Character-Continuity (CC)](https://discord.com/channels/903327676884979802/1525990165166686218)
 - [Calendar & Event System (CES)](https://discord.com/channels/903327676884979802/1521702669381533766)
+- [World Time Generator (WTG)](https://discord.com/channels/903327676884979802/1493069771170775049)
+- [Utility Scripts Collection (USC)](https://discord.com/channels/903327676884979802/1380196316382236827)
 
 </details>
 
@@ -164,6 +168,11 @@ All adventures played from your scenario will now include Master Merged Script V
 
 <details>
 <summary><b>(click to expand)</b></summary>
+
+### 4.0.2
+- Added World Time Generator (WTG) script
+- Added Utility Scripts Collection (USC) script
+- Attributed the appropriate credit to Original Creators
 
 ### 4.0.1
 - Added Calendar & Event System to the Collection
