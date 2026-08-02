@@ -2,8 +2,6 @@
   <img src="https://github.com/Zoocata1/Master-Merged-Script/blob/main/assets/AI-Dungeon-image.png" width="800">
 </p>
 
-# MASTER MERGED SCRIPT V4
-
 # MASTER MERGED SCRIPT V5
 
 <details>
@@ -13,6 +11,8 @@
 - Version 5.3.0 is now in the src-V5 folder for testing. 
 
 </details>
+
+# MASTER MERGED SCRIPT V4
 
 ---
 
