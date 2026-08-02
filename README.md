@@ -2,7 +2,7 @@
   <img src="https://github.com/Zoocata1/Master-Merged-Script/blob/main/assets/AI-Dungeon-image.png" width="800">
 </p>
 
-# MASTER MERGED SCRIPT V5
+# MASTER MERGED SCRIPT V5 (EXPERIMENTAL)
 
 <details>
 <summary><b>(click to expand)</b></summary>
