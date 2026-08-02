@@ -7,6 +7,10 @@
 <details>
 <summary><b>(click to expand)</b></summary>
 
+### 5.3.1
+- Updated Living Characters to version 2.63
+- Updated Character-Continuity (CC) to Stable version 1.0.74
+
 ### 5.3.0
 - Version 5.3.0 is now in the src-V5 folder for testing. 
 
