@@ -4,6 +4,8 @@
 
 # MASTER MERGED SCRIPT V5 (EXPERIMENTAL)
 
+## Changelog
+
 <details>
 <summary><b>(click to expand)</b></summary>
 
@@ -17,6 +19,27 @@
 </details>
 
 # MASTER MERGED SCRIPT V4
+
+</details>
+
+## Changelog
+
+<details>
+<summary><b>(click to expand)</b></summary>
+
+### 4.0.2
+- Added World Time Generator (WTG) script
+- Added Utility Scripts Collection (USC) script
+- Attributed the appropriate credit to Original Creators
+
+### 4.0.1
+- Added Calendar & Event System to the Collection
+- Attributed the appropriate credit to Original Creator
+
+### 4.0
+- Full Release
+
+</details>
 
 ---
 
@@ -159,28 +182,5 @@ All adventures played from your scenario will now include Master Merged Script V
 - [Calendar & Event System (CES)](https://discord.com/channels/903327676884979802/1521702669381533766)
 - [World Time Generator (WTG)](https://discord.com/channels/903327676884979802/1493069771170775049)
 - [Utility Scripts Collection (USC)](https://discord.com/channels/903327676884979802/1380196316382236827)
-
-</details>
-
----
-
-## Changelog
-
-<details>
-<summary><b>(click to expand)</b></summary>
-
-### 4.0.2
-- Added World Time Generator (WTG) script
-- Added Utility Scripts Collection (USC) script
-- Attributed the appropriate credit to Original Creators
-
-### 4.0.1
-- Added Calendar & Event System to the Collection
-- Attributed the appropriate credit to Original Creator
-
-### 4.0
-- Full Release
-
-</details>
 
 <p align="center"><i>Please show the original creators much love and appreciation</i> </p>
