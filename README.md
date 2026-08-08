@@ -27,6 +27,12 @@
 <details>
 <summary><b>(click to expand)</b></summary>
 
+### 4.0.3
+- Updated Character Continuity to v1.0.80
+- Added Living Meters v1
+- Added Story Card Extender
+- Attributed the appropriate credit to Original Creators
+
 ### 4.0.2
 - Added World Time Generator (WTG) script
 - Added Utility Scripts Collection (USC) script
@@ -70,6 +76,8 @@ FULL DISCLAIMER: Enabling all scripts, at the same time, CAN and/or WILL cause u
 | **Calendar & Event System (CES)** | @LeCroc |
 | **World Time Generator (WTG)** | @Aness (helpfulduckie) |
 | **Utility Scripts Collection (USC)** | @Intask |
+| **Living Meters** | @mahesvara.1337 |
+| **Story Card Extension (SCE)** | @kenflesh |
 
 
 ## Install Guide for Scenarios
@@ -182,5 +190,7 @@ All adventures played from your scenario will now include Master Merged Script V
 - [Calendar & Event System (CES)](https://discord.com/channels/903327676884979802/1521702669381533766)
 - [World Time Generator (WTG)](https://discord.com/channels/903327676884979802/1493069771170775049)
 - [Utility Scripts Collection (USC)](https://discord.com/channels/903327676884979802/1380196316382236827)
+- [Living Meters](https://discord.com/channels/903327676884979802/1534133778807652382)
+- [Story Card Extender (SCE)](https://discord.com/channels/903327676884979802/1498673595893682217)
 
 <p align="center"><i>Please show the original creators much love and appreciation</i> </p>
