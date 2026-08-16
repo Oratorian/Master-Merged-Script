@@ -1,4 +1,4 @@
-// MASTER SCRIPT V5.3.1 — Context
+// MASTER SCRIPT V5.3.6 — Context
 const modifier = (text) => {
   const original = (
     typeof text === "string" && text.length
@@ -18,7 +18,7 @@ const modifier = (text) => {
     }
     return { text: original };
   } catch (error) {
-    log("MCP V5.3.1 context error:", error);
+    log("MCP V5.3.3 context error:", error);
     return { text: original };
   }
 }
