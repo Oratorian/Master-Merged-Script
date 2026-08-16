@@ -9,6 +9,11 @@
 <details>
 <summary><b>(click to expand)</b></summary>
 
+### 5.3.6
+- Several QoL changes
+- Fixed a few issues of compression with Auto Cards
+- Re-added USC and added AR (Anti-Repetition) scripts
+
 ### 5.3.1
 - Updated Living Characters to version 2.63
 - Updated Character-Continuity (CC) to Stable version 1.0.74
