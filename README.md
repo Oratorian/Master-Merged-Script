@@ -1,5 +1,5 @@
 <p align="center">
- <img width="1500" height="500" alt="gif" src="https://github.com/user-attachments/assets/8cc44779-e8cf-4758-9082-caf326579732" />
+ <img width="1500" height="500" alt="giphy (2)" src="https://github.com/user-attachments/assets/ded0c400-1c05-4910-abc8-42133b21e05d" />
 </p>
 
 # MASTER MERGED SCRIPT V5 (EXPERIMENTAL)
@@ -201,5 +201,7 @@ All adventures played from your scenario will now include Master Merged Script V
 - [Utility Scripts Collection (USC)](https://discord.com/channels/903327676884979802/1380196316382236827)
 - [Living Meters](https://discord.com/channels/903327676884979802/1534133778807652382)
 - [Story Card Extender (SCE)](https://discord.com/channels/903327676884979802/1498673595893682217)
+
+<p align="center"><i>Top Image is from @dualvoidanima at giphy.com</i> </p>
 
 <p align="center"><i>Please show the original creators much love and appreciation</i> </p>
