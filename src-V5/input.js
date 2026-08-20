@@ -1,4 +1,4 @@
-// MASTER SCRIPT V5.3.6 — Input
+// MASTER SCRIPT V5.3.7 — Input
 const modifier = (text) => {
   const original = (
     typeof text === "string" && text.length
