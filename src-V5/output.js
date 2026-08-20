@@ -1,4 +1,4 @@
-// MASTER SCRIPT V5.3.6 — Output
+// MASTER SCRIPT V5.3.7 — Output
 const modifier = (text) => {
   const original = (
     typeof text === "string" && text.length
