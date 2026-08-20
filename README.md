@@ -1,5 +1,5 @@
 <p align="center">
- <img width="1500" height="1500" alt="gif" src="https://github.com/user-attachments/assets/8cc44779-e8cf-4758-9082-caf326579732" />
+ <img width="1500" height="500" alt="gif" src="https://github.com/user-attachments/assets/8cc44779-e8cf-4758-9082-caf326579732" />
 </p>
 
 # MASTER MERGED SCRIPT V5 (EXPERIMENTAL)
