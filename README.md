@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/Zoocata1/Master-Merged-Script/blob/main/assets/AI-Dungeon-image.png" width="800">
+  <img width="500" height="500" alt="giphy" src="https://github.com/user-attachments/assets/8e56e739-986b-4c57-8d05-5a2455ac3804" />
 </p>
 
 # MASTER MERGED SCRIPT V5 (EXPERIMENTAL)
