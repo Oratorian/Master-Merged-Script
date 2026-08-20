@@ -9,6 +9,10 @@
 <details>
 <summary><b>(click to expand)</b></summary>
 
+### 5.3.7
+- Updated Character Continuity to version 2.01
+- Implemented bug fixes for RealmHeart to avoid displaying [Current World State] information within viewable context
+
 ### 5.3.6
 - Several QoL changes
 - Fixed a few issues of compression with Auto Cards
