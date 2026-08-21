@@ -46307,6 +46307,8 @@ const RM = (function () {
       cardOK: true,    // false once we detect story cards are unavailable
       warned: false,
       reply: "",          // a command answer waiting to leave as the output
+      replyGen: 0,        // generations it has waited; more than one is late
+      cmdTurn: false,     // this generation answers a command, so it will not tick
       pend: [],           // notices waiting for the next command answer
       cfgWarned: false,   // config problems have been noticed once
       fired: {},          // trigger keys already counted this turn
@@ -46335,6 +46337,8 @@ const RM = (function () {
     if (typeof raw.cardOK === "boolean") s.cardOK = raw.cardOK;
     if (typeof raw.warned === "boolean") s.warned = raw.warned;
     if (typeof raw.reply === "string") s.reply = raw.reply;
+    if (isNum(raw.replyGen)) s.replyGen = raw.replyGen;
+    if (typeof raw.cmdTurn === "boolean") s.cmdTurn = raw.cmdTurn;
     if (Array.isArray(raw.pend)) {
       s.pend = raw.pend.filter((n) => typeof n === "string").slice(-PEND_MAX);
     }
@@ -46558,16 +46562,22 @@ const RM = (function () {
     return parts.join("  ·  ");
   }
 
+  // A space that survives whitespace collapsing.
+  const NB = "\u00a0";
+
   function statusBlock(s) {
     const rows = [];
     for (const e of activeDefs(s)) {
       if (!e.visible) continue;
       const v = s.res[e.id];
       const b = bandOf(e, v);
+      // Padded with U+00A0, not spaces. The story card keeps whitespace, but
+      // the answer also leaves as story output, and a run of ordinary spaces
+      // does not survive every output filter a host may run over it.
       rows.push(
-        `${e.icon || "•"} ${e.label.padEnd(10)} ${bar(v, e.min, e.max)} ` +
-        `${String(Math.round(v)).padStart(4)}/${Math.round(e.max)}` +
-        (b.name ? `  (${b.name})` : "")
+        `${e.icon || "•"} ${e.label.padEnd(10, NB)}${NB}${bar(v, e.min, e.max)}${NB}` +
+        `${String(Math.round(v)).padStart(4, NB)}/${Math.round(e.max)}` +
+        (b.name ? `${NB}${NB}(${b.name})` : "")
       );
     }
     return rows.join("\n");
@@ -46609,9 +46619,16 @@ const RM = (function () {
   // rides out with the answer. Nothing is pushed at the player unasked.
   const PEND_MAX = 12;
 
+  // How many generations an undelivered answer may wait for an Output hook.
+  const REPLY_MAX_GEN = 3;
+
   function notice(s, msg) {
     if (!s || !msg) return;
-    if (s.pend.indexOf(msg) !== -1) return;   // already waiting
+    // Only an immediate repeat is collapsed. The buffer outlives the hook now,
+    // so treating it as a set would drop a meter's SECOND crossing back into a
+    // band it has been in before, and leave the digest reading as though it had
+    // stayed where it was.
+    if (s.pend[s.pend.length - 1] === msg) return;
     s.pend.push(msg);
     while (s.pend.length > PEND_MAX) s.pend.shift();
   }
@@ -46860,18 +46877,26 @@ const RM = (function () {
 
     try {
       s.fired = {};              // a new player action begins a new turn
-      // An answer the player never received is stale the moment a new action
-      // arrives: the generation that would have carried it is already gone.
-      s.reply = "";
+      s.cmdTurn = false;
       reportProblems(s);
       syncCard(s);
 
       const reply = handleCommand(s, out);
       if (reply !== null) {
-        // Commands answer as the story output. The Output hook puts this in
+        // Commands answer as the story output: the Output hook puts this in
         // place of the AI's response, so the answer reaches the player through
         // the story itself and the module never writes state.message.
-        s.reply = compose(s, reply);
+        //
+        // The answer is NOT composed with the pending notices here. If it is
+        // never delivered, the notices have to survive for the next one.
+        //
+        // An answer already waiting is not discarded either. A host can defer
+        // this module's Output hook for a whole generation, and a command that
+        // moved a meter with no confirmation at all is worse than one answered
+        // a turn late.
+        s.reply = reply;
+        s.replyGen = 0;
+        s.cmdTurn = true;
         persist(s);
         return out;
       }
@@ -46899,15 +46924,28 @@ const RM = (function () {
     try {
       reportProblems(s);
 
+      // Context runs once per generation, so it is where a waiting answer
+      // ages. One generation is its own; beyond that the Output hook was
+      // skipped and the answer is late. Give up after a few, rather than let
+      // a forgotten answer surface in the middle of an unrelated scene.
+      if (s.reply) {
+        s.replyGen += 1;
+        if (s.replyGen > REPLY_MAX_GEN) { s.reply = ""; s.replyGen = 0; }
+      }
+
       // The Context hook is the only one that runs on every generation,
       // including Continue actions, so the turn tick belongs here.
       //
       // turnAdvanced keeps its own bookkeeping, so it runs even on a command
       // turn. What a command turn skips is the tick: that generation exists
       // only to carry the answer back, and asking a question should not cost
-      // the character a turn of hunger.
+      // the character a turn of hunger. The gate is the command turn itself,
+      // never "an answer is waiting" - an answer can wait for several
+      // generations, and those are ordinary turns that must drift as usual.
       const advanced = turnAdvanced(s);
-      if (advanced && !s.reply) {
+      const cmdTurn = s.cmdTurn;
+      s.cmdTurn = false;
+      if (advanced && !cmdTurn) {
         tick(s);
         announce(s);
       }
@@ -46942,14 +46980,22 @@ const RM = (function () {
     let out = typeof inText === "string" ? inText : " ";
 
     try {
-      // A pending command answer replaces the AI's response for this turn.
-      // The model's text is dropped unscanned: it is whatever the AI made of a
-      // slash command, not narration, and scanning it would fire triggers on
-      // words the story never contained.
+      // A pending command answer leaves on this generation.
+      let pending = "";
+      let late = false;
       if (s.reply) {
-        const answer = s.reply;
+        late = s.replyGen > 1;
+        pending = s.reply;
         s.reply = "";
+        s.replyGen = 0;
+      }
+
+      // On its own turn the answer REPLACES the response. The model was
+      // replying to a slash command, so that text is dropped UNSCANNED: it
+      // would otherwise fire triggers on words the story never contained.
+      if (pending && !late) {
         s.fired = {};
+        const answer = compose(s, pending);
         persist(s);
         return answer;
       }
@@ -46966,6 +47012,16 @@ const RM = (function () {
         }
       }
       s.fired = {};              // the turn is over; release every trigger
+
+      // A late answer is a different matter: this generation's narration is
+      // real and has just been scanned like any other, so the answer joins it
+      // rather than stealing it. Composed here, after the scan, so a band the
+      // story just crossed is reported in the same breath.
+      if (pending) {
+        const answer = compose(s, pending);
+        persist(s);
+        return out.trim() ? out + "\n\n" + answer : answer;
+      }
 
     } catch (err) {
       dbg("onOutput error", String(err));
