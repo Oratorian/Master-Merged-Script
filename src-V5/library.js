@@ -45446,7 +45446,7 @@ function MCPV5Create_living_meters() {
 // SPDX-License-Identifier: MIT
 
 /* ============================================================================
- * LIVING METERS v1: a resource framework for AI Dungeon
+ * LIVING METERS v1.2.0: a resource framework for AI Dungeon
  *
  * Copyright (c) 2026 Oratorian. MIT licensed; see the LICENSE file.
  * You may bundle this into your own script. Keeping this notice is all that
@@ -45488,9 +45488,11 @@ globalThis.info ??= {};
 
 const RM_CONFIG = {
   // Start from a preset, then add or override resources below.
-  // "survival" | "fantasy" | "scifi" | "noir" | "none"
+  // "survival" | "fantasy" | "scifi" | "noir" | "mechanic" | "none" |
+
   // If preset is "none", no resources are added by default and the preset section is ignored.
   // You must then define all resources and triggers you want in the "resources" array below.
+  // Starting from line 77 and ending on line 261
   preset: "none",
 
   // Resources defined here are MERGED over the preset, matched by `id`.
@@ -45712,11 +45714,9 @@ const RM_CONFIG = {
   // an unterminated fragment invites the AI to finish it.
   injectLabel: "Ship and crew status",
 
-  // Show a toast to the player when a resource crosses into a new band.
+  // Remember a band crossing so the next command answer can mention it.
+  // Nothing is pushed at the player unasked; see REPORTING at the top.
   announceBandChanges: true,
-
-  // Show the full status toast every N turns. 0 disables.
-  statusEvery: 0,
 
   // Maintain a "Living Meters" story card the player can read and edit.
   playerCard: true,
@@ -45725,11 +45725,10 @@ const RM_CONFIG = {
   // Command prefix. Players type "/status", "/hp +10", etc.
   commandPrefix: "/",
 
-  // Commands need the turn to stop before the AI runs. AI Dungeon has no clean
-  // way to do that: halting shows a "the AI is stumped" banner. Set false to
-  // let commands fall through to the AI instead (no banner, costs a
-  // generation). See README "Why does a command show an error banner?".
-  haltOnCommand: true,
+  // Ignore a trigger word sitting inside a negated clause, so "you do not
+  // eat" no longer feeds the character. A negator only reaches back to the
+  // last sentence break. Set false for the old behaviour.
+  negationGuard: true,
 
   // Scan player input as well as AI output for trigger matches.
   scanInput: true,
@@ -45930,6 +45929,172 @@ const RM_PRESETS = {
       ],
     },
   ],
+  // ==========================================================================
+  // MECHANIC — a machine you have to keep alive.
+  //
+  // Written for long-haul trucking but it fits any scenario where the vehicle
+  // is a character: haulage, a road trip in a dying van, a rally, a convoy.
+  //
+  // The design intent is that almost nothing here fails on its own. It fails
+  // because of what you did two hours ago. Climbing a grade burns diesel AND
+  // cooks the coolant. Coming down the far side costs brakes, and standing on
+  // the service brakes instead of gearing down costs three times as much.
+  // Repairs cost money you only get by delivering, and delivering costs hours
+  // you only get back by stopping for the night.
+  //
+  // Watch how "grade", "brake job" and "shut down" each appear on several
+  // resources at once. That is how one narrated moment moves three numbers.
+  // ==========================================================================
+  mechanic: [
+    {
+      id: "engine", label: "Engine", icon: "🔧",
+      // Wears very slowly with distance even when nothing goes wrong, which is
+      // what stops a well-maintained truck from simply sitting at 100 forever.
+      min: 0, max: 100, start: 82, perTurn: -0.2,
+      bands: [
+        { upTo: 0, name: "seized", tell: "The engine is dead. It will not turn over, it will not be coaxed back, and the vehicle is going nowhere without a tow. Treat this as final." },
+        { upTo: 25, name: "failing", tell: "The engine is failing. It misfires, loses power on any incline, and something metallic is knocking down there. The character expects it to let go at any moment." },
+        { upTo: 60, name: "rough", tell: "The engine runs rough. It smokes on startup, hesitates under load, and the character has learned which noises to ignore and which to worry about." },
+        { upTo: 100, name: "sound", tell: "" },
+      ],
+      triggers: [
+        { on: "output", words: ["blown gasket", "head gasket", "threw a rod", "turbo failure", "limp mode", "check engine", "engine light", "knocking", "seiz*"], delta: -22 },
+        { on: "both", words: ["overhaul*", "rebuild the engine", "mechanic", "repair shop", "service the truck", "new turbo", "top up the oil", "oil change"], delta: 32 },
+        // Abuse it and it remembers. "money shift" is a missed downshift at
+        // speed, which is exactly the sort of thing a driver does once.
+        { on: "both", words: ["redlin*", "over-rev*", "float the gears", "money shift", "ride the clutch"], delta: -9 },
+      ],
+    },
+    {
+      id: "fuel", label: "Diesel", icon: "⛽",
+      min: 0, max: 100, start: 55, perTurn: -2.2,
+      bands: [
+        { upTo: 0, name: "dry", tell: "The tanks are dry. The engine has coughed itself quiet and the vehicle is coasting to the shoulder on momentum alone." },
+        { upTo: 12, name: "fumes", tell: "The fuel gauge is below the peg and the low-fuel light has been on long enough that the character has stopped looking at it. Every exit sign matters now." },
+        { upTo: 32, name: "low", tell: "Fuel is low. The character is doing arithmetic about the next fuel stop instead of paying attention to the road." },
+        { upTo: 100, name: "ok", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["fuel island", "fuel up", "fuel stop", "fill the tanks", "top off the tanks", "refuel*", "diesel pump"], delta: 58 },
+        { on: "both", words: ["grade", "climb*", "long pull", "mountain pass", "hammer down", "open her up"], delta: -7 },
+        { on: "both", words: ["idle", "idles", "idling", "idled"], delta: -3 },
+      ],
+    },
+    {
+      id: "temp", label: "Coolant", icon: "🌡️",
+      // Inverted: HIGH is bad. Note the min is 160, not 0 — this is a gauge in
+      // degrees, and a running engine has a floor it never drops below. It
+      // sheds heat on its own every turn, so heat is a debt, not a wound.
+      min: 160, max: 260, start: 190, perTurn: -3,
+      bands: [
+        { upTo: 205, name: "normal", tell: "" },
+        { upTo: 232, name: "hot", tell: "The temperature gauge is well above normal and still climbing. The character keeps glancing at it, and the heater is on full with the windows down to pull heat off the engine." },
+        { upTo: 260, name: "overheating", tell: "The engine is overheating badly. Steam, an alarm, the smell of hot coolant. Pushing on from here does permanent damage and the character knows it." },
+      ],
+      triggers: [
+        { on: "both", words: ["grade", "climb*", "long pull", "mountain pass", "heavy load", "overweight", "air conditioning", "towing"], delta: 19 },
+        { on: "both", words: ["pull over", "shut down", "shut it down", "let her cool", "let it cool", "coolant", "radiator", "downshift*", "idle down"], delta: -26 },
+        { on: "output", words: ["overheat*", "steam", "boiled over", "boiling over", "temperature alarm", "coolant leak"], delta: 21 },
+      ],
+    },
+    {
+      id: "tires", label: "Tires", icon: "🛞",
+      min: 0, max: 100, start: 70, perTurn: -0.4,
+      bands: [
+        { upTo: 0, name: "blown", tell: "A tire is gone, running on the casing or the rim. The vehicle pulls hard to one side and cannot be driven any distance like this." },
+        { upTo: 20, name: "bald", tell: "The tires are down to the cords. They slip on anything wet and the character takes corners like the road is made of glass." },
+        { upTo: 55, name: "worn", tell: "The tires are worn thin and uneven. The character can hear them and does not like the sound." },
+        { upTo: 100, name: "good", tell: "" },
+      ],
+      triggers: [
+        { on: "output", words: ["blowout", "blew a tire", "tire blew", "flat tire", "gator", "shredded", "tread separat*"], delta: -38 },
+        { on: "both", words: ["new tires", "retread*", "tire shop", "change the tire", "swap the tire", "air up the tires", "check the pressure"], delta: 46 },
+        { on: "both", words: ["pothole*", "washboard", "rough road", "construction zone", "gravel", "curb", "curbed"], delta: -7 },
+      ],
+    },
+    {
+      id: "brakes", label: "Brakes", icon: "🛑",
+      min: 0, max: 100, start: 78, perTurn: -0.3,
+      bands: [
+        { upTo: 0, name: "gone", tell: "The brakes are gone. The pedal goes to the floor. The character is looking for a runaway ramp, a rising shoulder, anything that will take speed off without stopping the vehicle in pieces." },
+        { upTo: 22, name: "fading", tell: "The brakes are nearly gone and they smell like it. They fade after one hard application and the character is downshifting for everything instead." },
+        { upTo: 55, name: "worn", tell: "The brakes are soft and pull to one side. The character leaves a lot more room than they used to." },
+        { upTo: 100, name: "good", tell: "" },
+      ],
+      triggers: [
+        // The descent itself always costs a little. How it is driven costs the
+        // rest: standing on the service brakes is what actually kills them.
+        { on: "both", words: ["downgrade", "steep grade", "down the mountain", "descend*"], delta: -8 },
+        { on: "both", words: ["hard on the brakes", "brake hard", "braked hard", "panic stop", "stood on the brakes", "rode the brakes"], delta: -16 },
+        // The whole point of the preset in one line: doing it the right way
+        // does not repair anything, it just costs you less. Both this and the
+        // descent fire on the same turn, so a jake-braked grade is -2, not -8.
+        //
+        // Honest caveat: triggers have no conditions, so narrating an engine
+        // brake on flat ground credits you 6 you did not really earn. Keep this
+        // delta small for that reason, or delete it if your players game it.
+        { on: "both", words: ["jake brake", "engine brake", "compression brake", "low gear", "geared down", "gear down"], delta: 6 },
+        { on: "both", words: ["brake job", "new pads", "new shoes", "slack adjuster", "adjust the brakes", "brake shop"], delta: 42 },
+      ],
+    },
+    {
+      id: "hos", label: "Drive Time", icon: "⏱️",
+      // Legal driving hours left in the day. Half an hour per turn. This is the
+      // meter that makes the scenario a job rather than a drive: it is the only
+      // one you cannot fix with money, and stopping to fix it costs a night.
+      min: 0, max: 11, start: 11, perTurn: -0.5,
+      bands: [
+        { upTo: 0, name: "out of hours", tell: "The character is out of legal driving hours. Every mile from here is a violation they will have to answer for, and the pressure to find somewhere legal to park is immediate and constant." },
+        { upTo: 1, name: "final hour", tell: "Less than an hour of legal drive time is left, and the truck stops fill up long before dark. The character is weighing distance against a place to sleep." },
+        { upTo: 3, name: "running short", tell: "Drive time is running short. The character is doing the maths on whether this run makes it before the clock does." },
+        { upTo: 11, name: "legal", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["ten hour break", "10 hour break", "shut down for the night", "park for the night", "sleeper berth", "reset the clock", "34 hour"], delta: 11 },
+        // Buys you time and nothing else. If you add a DOT-attention meter,
+        // put these same words on it with a large positive delta.
+        { on: "both", words: ["fudge the log", "run illegal", "yellow log", "off the books"], delta: 3 },
+      ],
+    },
+    {
+      id: "alert", label: "Alertness", icon: "☕",
+      // Drains fast enough that fatigue arrives on its own, without needing a
+      // trigger to cause it: "tired" by about turn 12, "exhausted" by turn 24.
+      // This is the one meter that should degrade whether or not anything
+      // interesting happens, because that is what a long day in a seat is.
+      min: 0, max: 100, start: 80, perTurn: -2.4,
+      bands: [
+        { upTo: 0, name: "microsleeping", tell: "The character is falling asleep at the wheel. They are losing seconds of road at a time and coming back to a lane they do not remember choosing. Narrate this as the emergency it is." },
+        { upTo: 22, name: "exhausted", tell: "The character is dangerously tired. Their reactions are slow, their eyes keep closing, and they are arguing with themselves about stopping." },
+        { upTo: 50, name: "tired", tell: "The character is tired. Their attention drifts and they have to work to keep it on the road." },
+        { upTo: 100, name: "sharp", tell: "" },
+      ],
+      triggers: [
+        // "rest" is safe as a bare word: matching respects word boundaries, so
+        // it will not fire on "restaurant" or "arrest".
+        { on: "both", words: ["sleep", "slept", "sleeping", "nap", "napped", "rest", "rested", "sleeper berth", "shut down for the night"], delta: 58 },
+        { on: "both", words: ["coffee", "caffeine", "energy drink", "black coffee"], delta: 15 },
+        { on: "both", words: ["drove through the night", "drive through the night", "push through", "pushed through", "white line fever", "one more hour"], delta: -19 },
+      ],
+    },
+    {
+      id: "cash", label: "Settlement", icon: "💵",
+      // Starts at roughly one fill plus one repair. Tight on purpose: the
+      // maintenance decisions only matter if you cannot afford all of them.
+      min: 0, max: 99999, start: 1400, perTurn: 0,
+      bands: [
+        { upTo: 0, name: "broke", tell: "The character has no money at all. The fuel card is declined, the shop will not start work, and there is nothing to eat that is not already in the cab." },
+        { upTo: 250, name: "tight", tell: "Money is tight enough that the character is choosing between fuel and repairs, and putting off the repair." },
+        { upTo: 99999, name: "ok", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["deliver*", "unload*", "drop the trailer", "bill of lading", "got paid", "settlement", "signed for the load"], delta: 2200 },
+        { on: "both", words: ["mechanic", "repair shop", "brake job", "new tires", "overhaul*", "towed", "tow truck"], delta: -680 },
+        { on: "both", words: ["fuel island", "fuel up", "fill the tanks", "refuel*"], delta: -410 },
+        { on: "output", words: ["ticket", "citation", "fined", "out of service", "violation"], delta: -900 },
+      ],
+    },
+  ],
 };
 
 /* ============================================================================
@@ -45997,6 +46162,50 @@ const RM = (function () {
     return escapeRe(raw);
   }
 
+  // A trigger word inside a negated clause should not fire. Without this every
+  // preset pays out for declining: "you do not eat" fed the character and "you
+  // don't drink" watered them, because the pattern only asks whether the
+  // word is present anywhere.
+  //
+  // Bare "no" and "none" are deliberately absent. They negate as often as not,
+  // but they also appear in "no choice but to eat", where suppressing would be
+  // wrong, and that phrasing is common in the survival prose these presets are
+  // written for.
+  const NEGATORS = /\bnot\b|n['’]t\b|\bnever\b|\bcannot\b|\brefus\w*|\bdeclin\w*|\bavoid\w*|\bwithout\b|\binstead of\b|\brather than\b|\bunable to\b|\bfail\w* to\b|\bdecid\w* against\b/i;
+
+  // A cap for a very long sentence; the clause bound below usually bites first.
+  const NEG_WINDOW = 80;
+
+  function negated(src, at) {
+    let clause = src.slice(Math.max(0, at - NEG_WINDOW), at);
+    // Keep only what follows the last clause break, so "It was not a good day.
+    // You eat." does not suppress the meal, and neither does "you do not eat the
+    // berries, then you eat the fish".
+    //
+    // A comma counts as a break. That mis-reads a negated list, "you do not eat,
+    // drink, or rest", where the later items should stay suppressed. It is still
+    // the better default: getting a comma wrong means firing, which is exactly
+    // what this framework did before the guard existed, while leaving the comma
+    // out means silently withholding a payout the player earned. Prefer the
+    // error that matches the old behaviour.
+    const cut = clause.search(/[.!?;:,\n][^.!?;:,\n]*$/);
+    if (cut !== -1) clause = clause.slice(cut + 1);
+    return NEGATORS.test(clause);
+  }
+
+  // True if the word appears at least once OUTSIDE a negated clause. Every
+  // occurrence is examined, so "you do not eat the berries, then you eat the
+  // fish" still counts as eating.
+  function fires(re, src) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      if (m[0].length === 0) { re.lastIndex++; continue; }
+      if (!RM_CONFIG.negationGuard || !negated(src, m.index)) return true;
+    }
+    return false;
+  }
+
   // Turns a creator's trigger into { on, re, delta }, or records why it can't.
   function compileTrigger(resId, t, index) {
     const where = `${resId} trigger #${index + 1}`;
@@ -46021,7 +46230,13 @@ const RM = (function () {
         );
         return null;
       }
-      return { on: on, re: t.match, delta: t.delta, words: ["(custom pattern)"] };
+      // Re-flagged with "g" so fires() can walk it. The author's own source
+      // and case sensitivity are preserved.
+      const gflags = t.match.flags.indexOf("g") === -1 ? t.match.flags + "g" : t.match.flags;
+      return {
+        on: on, re: new RegExp(t.match.source, gflags),
+        delta: t.delta, words: ["(custom pattern)"],
+      };
     }
 
     if (!Array.isArray(t.words) || !t.words.length) {
@@ -46043,12 +46258,13 @@ const RM = (function () {
     // Boundaries on both sides, so "rest" fires on "you rest" but not on
     // "restaurant" or "arrest". \b is not used because it needs a word
     // character to sit against, which breaks entries like "c++" or "o2!".
-    // The leading alternative consumes a character, which is harmless for
-    // .test(), and avoids needing lookbehind support.
+    // The leading alternative consumes a character, which shifts the reported
+    // index back by one; harmless, because the guard reads the clause before it.
     try {
       return {
         on: on,
-        re: new RegExp("(?:^|\\W)(?:" + alts.join("|") + ")(?!\\w)", "i"),
+        // "g" so fires() can walk every occurrence, not only the first.
+        re: new RegExp("(?:^|\\W)(?:" + alts.join("|") + ")(?!\\w)", "gi"),
         delta: t.delta,
         words: t.words.slice(),   // kept for introspection and testing
       };
@@ -46133,13 +46349,14 @@ const RM = (function () {
       turn: 0,         // our own turn counter, not info.actionCount
       hlen: 0,         // history.length at the last counted turn
       outHash: 0,      // hash of the last output we scanned
-      msgPrev: "",     // last toast we wrote, for cooperative state.message
       cardOK: true,    // false once we detect story cards are unavailable
       warned: false,
-      pendingStop: false, // a command ran in Input; Context executes the halt
-      cfgWarned: false,   // config problems have been shown once
+      reply: "",          // a command answer waiting to leave as the output
+      pend: [],           // notices waiting for the next command answer
+      cfgWarned: false,   // config problems have been noticed once
       fired: {},          // trigger keys already counted this turn
       over: {},        // player overrides parsed from the story card
+      overWarn: "",    // unknown card keys we have already flagged
     };
   }
 
@@ -46160,13 +46377,16 @@ const RM = (function () {
     if (isNum(raw.turn)) s.turn = raw.turn;
     if (isNum(raw.hlen)) s.hlen = raw.hlen;
     if (isNum(raw.outHash)) s.outHash = raw.outHash;
-    if (typeof raw.msgPrev === "string") s.msgPrev = raw.msgPrev;
     if (typeof raw.cardOK === "boolean") s.cardOK = raw.cardOK;
     if (typeof raw.warned === "boolean") s.warned = raw.warned;
-    if (typeof raw.pendingStop === "boolean") s.pendingStop = raw.pendingStop;
+    if (typeof raw.reply === "string") s.reply = raw.reply;
+    if (Array.isArray(raw.pend)) {
+      s.pend = raw.pend.filter((n) => typeof n === "string").slice(-PEND_MAX);
+    }
     if (typeof raw.cfgWarned === "boolean") s.cfgWarned = raw.cfgWarned;
     if (raw.fired && typeof raw.fired === "object") s.fired = raw.fired;
     if (raw.over && typeof raw.over === "object") s.over = raw.over;
+    if (typeof raw.overWarn === "string") s.overWarn = raw.overWarn;
     return s;
   }
 
@@ -46211,6 +46431,37 @@ const RM = (function () {
       else over[key] = rawVal;
     }
     return over;
+  }
+
+  // Every key the card can actually set. parseOverrides accepts any
+  // "key = value" line, so without this a typo is stored forever and silently
+  // ignored. That is how a player ends up convinced the card does nothing.
+  const OVER_GLOBALS = ["difficulty"];
+  const OVER_FIELDS = ["min", "max", "start", "perTurn", "visible", "enabled"];
+
+  function isOverrideKey(key) {
+    if (OVER_GLOBALS.indexOf(key) !== -1) return true;
+    const dot = key.lastIndexOf(".");
+    if (dot === -1) return false;
+    return defs().some((d) => d.id === key.slice(0, dot))
+      && OVER_FIELDS.indexOf(key.slice(dot + 1)) !== -1;
+  }
+
+  function checkOverrides(s) {
+    const bad = [];
+    for (const key of Object.keys(s.over)) {
+      if (isOverrideKey(key)) continue;
+      bad.push(key);
+    }
+    // Keyed on the exact set, so fixing the card stops the warning and a new
+    // mistake raises a fresh one.
+    const sig = bad.join(",");
+    if (sig === s.overWarn) return;
+    s.overWarn = sig;
+    if (!bad.length) return;
+    notice(s, "Living Meters card: " + bad.map((k) => '"' + k + '"').join(", ") +
+      (bad.length > 1 ? " are not settings." : " is not a setting.") +
+      " See the notes at the top of the card.");
   }
 
   function optNum(s, key, fallback) {
@@ -46324,7 +46575,7 @@ const RM = (function () {
         if (t.on !== "both" && t.on !== phase) continue;
         const key = e.id + "#" + i;
         if (s.fired[key]) continue;
-        if (!t.re.test(src)) continue;
+        if (!fires(t.re, src)) continue;
         s.fired[key] = 1;
         const r = addVal(s, e.id, t.delta);
         if (r && r.before !== r.after) changes.push(r);
@@ -46389,28 +46640,32 @@ const RM = (function () {
     return out;
   }
 
-  // ---- toasts -------------------------------------------------------------
+  // ---- notices ------------------------------------------------------------
 
-  // Collected during a hook and written once. The Library re-executes on every
-  // hook, so this buffer resets by itself each time.
-  let TOASTS = [];
+  // Anything worth telling the player that is NOT an answer to a command: a
+  // band crossing, an unrecognised card key, a config problem.
+  //
+  // These used to be toasts written to state.message. That is a single slot
+  // shared by every script on the scenario, and sharing it cooperatively does
+  // not work: whoever writes last wins, the loser's message is gone, and a
+  // module that politely yields to a value it does not recognise can end up
+  // mute for the rest of the adventure. So this module no longer writes that
+  // slot at all. A notice waits in state until a command asks for it and
+  // rides out with the answer. Nothing is pushed at the player unasked.
+  const PEND_MAX = 12;
 
-  function toast(s, msg) {
-    if (msg && TOASTS.indexOf(msg) === -1) TOASTS.push(msg);
+  function notice(s, msg) {
+    if (!s || !msg) return;
+    if (s.pend.indexOf(msg) !== -1) return;   // already waiting
+    s.pend.push(msg);
+    while (s.pend.length > PEND_MAX) s.pend.shift();
   }
 
-  // state.message is a single slot any script can write. Only overwrite what we
-  // put there ourselves, so we never clobber another script's toast.
-  function flushToast(s) {
-    if (!TOASTS.length) return;
-    const msg = TOASTS.join("\n");
-    TOASTS = [];
-    const current = typeof state.message === "string" ? state.message : "";
-    if (current && current !== s.msgPrev) return; // somebody else owns the slot
-    // The client suppresses a toast identical to the previous one; perturb it.
-    const out = current === msg ? msg + " " : msg;
-    state.message = out;
-    s.msgPrev = out;
+  // Everything that has happened since the last answer, then the answer itself.
+  function compose(s, reply) {
+    const notes = s.pend.slice();
+    s.pend = [];
+    return notes.length ? notes.join("\n") + "\n\n" + reply : reply;
   }
 
   // ---- story card ---------------------------------------------------------
@@ -46419,9 +46674,14 @@ const RM = (function () {
     "# Living Meters settings. Edit the lines below, then close this card.",
     "# Lines starting with # are ignored. Delete a line to use the default.",
     "#",
-    "#   difficulty = easy | normal | hard",
+    "# Or use the /set command, e.g.  /set difficulty hard",
+    "#",
+    "#   difficulty  = easy | normal | hard",
     "#   <resource>.perTurn = -2      how much it drifts each turn",
     "#   <resource>.max     = 120     raise or lower the ceiling",
+    "#   <resource>.min     = 10      raise or lower the floor",
+    "#   <resource>.start   = 60      the value /reset restores",
+    "#   <resource>.visible = off     keep tracking it, stop showing it",
     "#   <resource>.off               stop tracking it entirely",
     "#   <resource>.on                track it again",
     "#",
@@ -46469,18 +46729,43 @@ const RM = (function () {
     if (!card) {
       if (!s.warned) {
         s.warned = true;
-        toast(s, "Living Meters: story cards are unavailable. Enable Gameplay > Memory System > Memory Bank.");
+        notice(s, "Living Meters: story cards are unavailable. Enable Gameplay > Memory System > Memory Bank.");
       }
       return;
     }
 
     // The player owns `description`; we only ever read it.
     s.over = parseOverrides(card.description);
+    checkOverrides(s);
 
     // We own `entry`, and it never reaches the AI because `keys` never matches.
     const block = statusBlock(s);
     const next = `Current status (read-only, updates every turn)\n\n${block}\n`;
     if (card.entry !== next) card.entry = next;
+  }
+
+  // ---- writing a setting back to the card ---------------------------------
+
+  // syncCard re-parses the card on every hook and replaces s.over, so a command
+  // that only wrote state would be erased inside the same turn. The card stays
+  // the single source of truth; /set edits it and the player can see the result.
+  function writeSetting(src, key, value) {
+    const text = typeof src === "string" ? src : "";
+    const re = new RegExp("^\\s*" + escapeRe(key) + "\\s*[=:]", "i");
+    const out = [];
+    let done = false;
+    for (const line of text.split("\n")) {
+      if (line.trim().startsWith("#") || !re.test(line)) {
+        out.push(line);
+        continue;
+      }
+      if (done) continue;                  // collapse an existing duplicate
+      out.push(key + " = " + value);
+      done = true;
+    }
+    while (out.length && out[out.length - 1].trim() === "") out.pop();
+    if (!done) out.push(key + " = " + value);
+    return out.join("\n") + "\n";
   }
 
   // ---- commands -----------------------------------------------------------
@@ -46502,6 +46787,8 @@ const RM = (function () {
       `${p}<id> +N       add to a resource   (e.g. ${p}hp +10)`,
       `${p}<id> -N       subtract from it`,
       `${p}<id> =N       set it exactly`,
+      `${p}set <k> <v>   change a setting  (e.g. ${p}set difficulty hard)`,
+      `${p}set           show what you have changed`,
       `${p}reset         restore starting values`,
       `${p}help          this list`,
     ].join("\n");
@@ -46521,8 +46808,36 @@ const RM = (function () {
     if (cmd === "help") return helpText();
     if (cmd === "status") return statusBlock(s) || "No resources are being tracked.";
 
+    if (cmd === "set") {
+      const key = parts[1];
+      const value = parts.slice(2).join(" ");
+      if (!key) {
+        const keys = Object.keys(s.over);
+        return keys.length
+          ? "Your settings:\n" + keys.map((k) => k + " = " + s.over[k]).join("\n")
+          : `Nothing changed yet. Try ${p}set difficulty hard`;
+      }
+      if (!isOverrideKey(key)) {
+        return `"${key}" is not a setting you can change. Try ` +
+          `${p}set difficulty hard, or ${p}set <resource>.perTurn -2. ` +
+          `${p}help lists the rest.`;
+      }
+      if (!value) return `Usage: ${p}set ${key} <value>`;
+
+      const card = findCard();
+      if (!card) {
+        return "The settings card is not available. Turn on Gameplay > Memory System > Memory Bank.";
+      }
+      card.description = writeSetting(card.description, key, value);
+      s.over = parseOverrides(card.description);
+      s.overWarn = "";                     // a new key may need flagging again
+      return `${key} = ${value}`;
+    }
+
     if (cmd === "reset") {
-      for (const d of defs()) setVal(s, d.id, d.start);
+      // eff() rather than the raw definition, so a start set in the card
+      // is what /reset restores.
+      for (const d of defs()) setVal(s, d.id, eff(s, d).start);
       s.band = {};
       return "Meters reset.\n\n" + statusBlock(s);
     }
@@ -46564,7 +46879,7 @@ const RM = (function () {
         s.band[e.id] = name;
       }
     }
-    if (crossed.length) toast(s, crossed.join("   "));
+    if (crossed.length) notice(s, crossed.join("\n"));
   }
 
   // ---- config problem reporting ------------------------------------------
@@ -46578,7 +46893,7 @@ const RM = (function () {
     if (s.cfgWarned && !RM_CONFIG.debug) return;
     s.cfgWarned = true;
     const shown = PROBLEMS.slice(0, 4);
-    toast(s, "Living Meters, check your config:\n• " + shown.join("\n• ") +
+    notice(s, "Living Meters, check your config:\n• " + shown.join("\n• ") +
       (PROBLEMS.length > shown.length ? `\n• …and ${PROBLEMS.length - shown.length} more` : ""));
   }
 
@@ -46590,18 +46905,18 @@ const RM = (function () {
 
     try {
       s.fired = {};              // a new player action begins a new turn
+      // An answer the player never received is stale the moment a new action
+      // arrives: the generation that would have carried it is already gone.
+      s.reply = "";
       reportProblems(s);
       syncCard(s);
 
       const reply = handleCommand(s, out);
       if (reply !== null) {
-        toast(s, reply);
-        if (RM_CONFIG.haltOnCommand) {
-          // stop:true from onInput surfaces an error banner to the player; the
-          // working halt is executed from the Context hook instead.
-          s.pendingStop = true;
-        }
-        flushToast(s);
+        // Commands answer as the story output. The Output hook puts this in
+        // place of the AI's response, so the answer reaches the player through
+        // the story itself and the module never writes state.message.
+        s.reply = compose(s, reply);
         persist(s);
         return out;
       }
@@ -46617,7 +46932,6 @@ const RM = (function () {
       dbg("onInput error", String(err));
     }
 
-    flushToast(s);
     persist(s);
     return out;
   }
@@ -46625,27 +46939,22 @@ const RM = (function () {
   function onContext(inText, inStop) {
     const s = hydrate();
     let out = typeof inText === "string" ? inText : " ";
-    let halt = inStop === true;
+    const halt = inStop === true;
 
     try {
-      if (s.pendingStop) {
-        s.pendingStop = false;
-        halt = true;
-        flushToast(s);
-        persist(s);
-        return [out, halt];
-      }
-
       reportProblems(s);
 
       // The Context hook is the only one that runs on every generation,
       // including Continue actions, so the turn tick belongs here.
-      if (turnAdvanced(s)) {
+      //
+      // turnAdvanced keeps its own bookkeeping, so it runs even on a command
+      // turn. What a command turn skips is the tick: that generation exists
+      // only to carry the answer back, and asking a question should not cost
+      // the character a turn of hunger.
+      const advanced = turnAdvanced(s);
+      if (advanced && !s.reply) {
         tick(s);
         announce(s);
-        if (RM_CONFIG.statusEvery > 0 && s.turn % RM_CONFIG.statusEvery === 0) {
-          toast(s, statusBlock(s));
-        }
       }
 
       syncCard(s);
@@ -46669,7 +46978,6 @@ const RM = (function () {
       dbg("onContext error", String(err));
     }
 
-    flushToast(s);
     persist(s);
     return [out, halt];
   }
@@ -46679,6 +46987,18 @@ const RM = (function () {
     let out = typeof inText === "string" ? inText : " ";
 
     try {
+      // A pending command answer replaces the AI's response for this turn.
+      // The model's text is dropped unscanned: it is whatever the AI made of a
+      // slash command, not narration, and scanning it would fire triggers on
+      // words the story never contained.
+      if (s.reply) {
+        const answer = s.reply;
+        s.reply = "";
+        s.fired = {};
+        persist(s);
+        return answer;
+      }
+
       if (RM_CONFIG.scanOutput && out.trim()) {
         // Retries reuse cached outputs, so the same text can arrive twice.
         // Hashing it stops a retry from applying every trigger a second time.
@@ -46696,7 +47016,6 @@ const RM = (function () {
       dbg("onOutput error", String(err));
     }
 
-    flushToast(s);
     persist(s);
     // Never return an empty string: onOutput throws a player-visible error.
     return out.length ? out : " ";
@@ -46734,6 +47053,11 @@ const RM = (function () {
         };
       });
     },
+    // Queue a line for the player. It waits with RM's own notices and leaves
+    // with the next command answer, so an add-on can say something without
+    // touching state.message and without racing anybody for it.
+    notice: (msg) => { const s = hydrate(); notice(s, msg); persist(s); },
+
     problems: () => { defs(); return PROBLEMS.slice(); },
   };
 })();
