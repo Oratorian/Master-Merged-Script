@@ -212,6 +212,11 @@ const RM_CONFIG = {
   // Optimized Context) | "frontMemory" (survives it, lags a turn) | "none".
   inject: "context",
 
+  // Take this module's own command answers back out of the context window.
+  // They are delivered as story output, so they land in the history and would
+  // otherwise be read back to the model on every turn that follows.
+  hideAnswersFromAI: true,
+
   // Prefix for the injected block. Keep it bracketed and in whole sentences.
   injectLabel: "Ship and crew status",
 
@@ -46869,6 +46874,72 @@ const RM = (function () {
       (PROBLEMS.length > shown.length ? `\n• …and ${PROBLEMS.length - shown.length} more` : ""));
   }
 
+  // ---- keeping our own answers out of the AI's context --------------------
+
+  // A command answers as story output, so the answer lands in the history and
+  // comes back inside the context window on every turn after it. Left there,
+  // the model reads a table of numbers while the directive is telling it never
+  // to state the numbers, and it starts reciting meters instead of playing
+  // them. Take our own lines back out before the model sees them.
+  //
+  // Matched by shape, not by a hidden marker. The host runs its own filters
+  // over the answer after we return it - one of them collapses runs of spaces -
+  // so nothing invisible we stamp on the text is guaranteed to survive the
+  // round trip. A bar is unmistakable, and the rest is keyed on the labels this
+  // scenario actually configures, so it cannot fire on ordinary prose.
+  const BAR_ROW = /[\u2588\u2591]{3,}/;
+
+  function answerShapes(s) {
+    const labels = defs()
+      .map((d) => escapeRe(eff(s, d).label))
+      .filter(Boolean)
+      .join("|");
+    const p = escapeRe(RM_CONFIG.commandPrefix || "/");
+    return {
+      // "Hull: critical", "Hull: 100 -> 90/100", "Hull: 90/100 (damaged)",
+      // with or without the icon in front.
+      labelled: labels ? new RegExp("^(?:\\S+\\s+)?(?:" + labels + "):\\s") : null,
+      help: new RegExp("^" + p + "\\S*\\s"),
+    };
+  }
+
+  function isOwnAnswer(line, shapes) {
+    const t = line.trim();
+    if (!t) return false;
+    if (BAR_ROW.test(t)) return true;                      // a status row
+    if (shapes.help.test(t)) return true;                  // a /help row
+    if (shapes.labelled && shapes.labelled.test(t)) return true;
+    if (t === "Meters reset." || t === "Your settings:") return true;
+    if (t.indexOf("Living Meters") === 0) return true;     // a card or config notice
+    if (t.indexOf('Unknown command "') === 0) return true;
+    // And the action that asked for it. Left on its own, with the answer taken
+    // out from under it, it is an order the model can see nobody answered.
+    if (stripPrefix(t).indexOf(RM_CONFIG.commandPrefix || "/") === 0) return true;
+    return false;
+  }
+
+  function scrubAnswers(s, text) {
+    if (!RM_CONFIG.hideAnswersFromAI) return text;
+    const src = typeof text === "string" ? text : "";
+    // Only inside the story itself. Story cards, the summary and the memory
+    // bank are somebody else's to edit.
+    const m = src.match(/(^|\n)Recent\s*Story\s*:[ \t]*\n/i);
+    if (!m) return src;
+
+    const cut = m.index + m[0].length;
+    const shapes = answerShapes(s);
+    const kept = [];
+    let removed = 0;
+    for (const line of src.slice(cut).split("\n")) {
+      if (isOwnAnswer(line, shapes)) { removed += 1; continue; }
+      kept.push(line);
+    }
+    if (!removed) return src;
+    dbg("scrubbed", removed, "of our own lines out of the context");
+    // Each removed row leaves a hole, and a whole table leaves a crater.
+    return src.slice(0, cut) + kept.join("\n").replace(/\n{3,}/g, "\n\n");
+  }
+
   // ---- hook entry points --------------------------------------------------
 
   function onInput(inText) {
@@ -46951,6 +47022,8 @@ const RM = (function () {
       }
 
       syncCard(s);
+
+      out = scrubAnswers(s, out);
 
       if (RM_CONFIG.inject === "context") {
         const block = directive(s);
