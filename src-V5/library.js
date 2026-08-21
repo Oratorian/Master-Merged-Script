@@ -4,6 +4,243 @@
    --- Thank you for all your hard work and feedback ---
    ============================================================ */
 
+/* ============================================================================
+   MODULE CONFIG — the bundled scripts are configured from here.
+   Everything below this block is machinery; you do not need to read it.
+   ============================================================================ */
+
+/* ---- LIVING METERS ---------------------------------------------------------
+   What the meters track, how fast they drift, what moves them, and what the AI
+   is told when they change. Players can override the numbers in-game from the
+   "⚙️ Living Meters" story card. */
+
+const RM_CONFIG = {
+  // Starting set: "survival" | "fantasy" | "scifi" | "noir" | "mechanic" | "none".
+  // "none" means the resources array below is the whole config.
+  preset: "none",
+
+  // Merged over the preset, matched by id. A new id adds a new resource.
+  // Triggers take word lists, never regexes: "coin" matches that word only,
+  // "loot*" also matches looted/looting, "dead body" matches the phrase.
+  // Always case-insensitive, always on word boundaries.
+  //
+  // DEEP SPACE: twelve interlocking systems, where fixing one costs another.
+  resources: [
+
+    // ---- Ship -------------------------------------------------------------
+    {
+      id: "hull", label: "Hull", icon: "🛡️",
+      min: 0, max: 100, start: 100, perTurn: 0,
+      bands: [
+        { upTo: 0, name: "breached", tell: "The hull has failed. The ship is venting to vacuum and is no longer survivable; narrate the decompression and its consequences." },
+        { upTo: 25, name: "critical", tell: "The hull is holed in several places. Bulkheads groan, atmosphere hisses out through patches, and any hard manoeuvre risks tearing it wide open." },
+        { upTo: 60, name: "damaged", tell: "The hull is buckled and patched. Stress fractures creak whenever the ship accelerates." },
+        { upTo: 100, name: "sound", tell: "" },
+      ],
+      triggers: [
+        { on: "output", words: ["hull breach", "micrometeor*", "collision", "ruptur*", "direct hit", "shrapnel", "debris field"], delta: -18 },
+        { on: "both", words: ["weld*", "patch the hull", "hull patch", "seal the breach", "repair the hull"], delta: 20 },
+      ],
+    },
+    {
+      id: "power", label: "Power", icon: "🔋",
+      min: 0, max: 100, start: 88, perTurn: -0.7,
+      bands: [
+        { upTo: 0, name: "dark", tell: "The ship is dead. No lights, no heat, no life support, no doors. Only emergency chemical lamps and whatever is in the character's hands." },
+        { upTo: 18, name: "brownout", tell: "Power is nearly gone. Lights flicker, non-essential systems are offline, and consoles reboot mid-sentence." },
+        { upTo: 50, name: "rationed", tell: "Power is being rationed. Whole decks are dark and the character has to choose which systems to bring up." },
+        { upTo: 100, name: "nominal", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["reactor", "spin up the core", "power cell", "solar array", "recharg*"], delta: 34 },
+        { on: "both", words: ["reroute power", "divert power", "overclock*", "full burn"], delta: -14 },
+        { on: "output", words: ["short circuit", "power surge", "grid failure", "blown coupling"], delta: -20 },
+      ],
+    },
+    {
+      id: "fuel", label: "Fuel", icon: "⛽",
+      min: 0, max: 100, start: 62, perTurn: 0,
+      bands: [
+        { upTo: 0, name: "dry", tell: "The tanks are dry. The ship cannot manoeuvre and is on a ballistic course it cannot change." },
+        { upTo: 15, name: "reserve", tell: "Fuel is down to the reserve. There is enough for one burn, maybe, and nothing after it." },
+        { upTo: 100, name: "ok", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["burn", "burns", "burned", "thrust*", "manoeuvr*", "maneuver*", "course correction"], delta: -13 },
+        { on: "both", words: ["refuel*", "fuel line", "siphon*", "tanker", "hydrogen scoop"], delta: 30 },
+      ],
+    },
+    {
+      id: "heat", label: "Thermal", icon: "🌡️",
+      // Inverted: HIGH is bad. min need not be 0; a crewed ship has a floor.
+      min: 15, max: 100, start: 28, perTurn: -0.8,
+      bands: [
+        { upTo: 35, name: "cool", tell: "" },
+        { upTo: 70, name: "warm", tell: "The ship is running hot. Deck plating is uncomfortable to touch and the air tastes of scorched dust." },
+        { upTo: 100, name: "overheating", tell: "The ship is overheating badly. Coolant alarms are constant, sweat runs freely, and electronics are failing from thermal stress." },
+      ],
+      triggers: [
+        { on: "both", words: ["reactor", "overclock*", "full burn", "weapons fire"], delta: 13 },
+        { on: "both", words: ["radiator*", "vent heat", "coolant", "shut down the core", "power down"], delta: -22 },
+        { on: "output", words: ["stellar flare", "close approach", "sunward"], delta: 16 },
+      ],
+    },
+
+    // ---- Life support -----------------------------------------------------
+    {
+      id: "o2", label: "Oxygen", icon: "🫁",
+      min: 0, max: 100, start: 100, perTurn: -1.3,
+      bands: [
+        { upTo: 0, name: "anoxic", tell: "There is no breathable air left. The character is suffocating: vision tunnelling, lungs burning, seconds of consciousness remaining." },
+        { upTo: 20, name: "critical", tell: "Oxygen is critically low. Every breath is shallow and insufficient; the character is light-headed and their judgement is visibly slipping." },
+        { upTo: 45, name: "thin", tell: "The air is thin and stale. The character tires quickly and has a persistent headache." },
+        { upTo: 100, name: "breathable", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["scrubber*", "oxygen candle", "o2 tank", "air supply", "recharge the tanks", "algae tank"], delta: 40 },
+        { on: "both", words: ["eva", "spacewalk*", "airlock cycle", "suit up"], delta: -12 },
+        // Not bare "vent*"/"leak*": those fire on ventilation and coolant.
+        { on: "output", words: ["hull breach", "ruptur*", "decompress*", "atmosphere leak", "air leak", "blown seal"], delta: -22 },
+      ],
+    },
+    {
+      id: "food", label: "Rations", icon: "🍱",
+      min: 0, max: 100, start: 74, perTurn: -0.9,
+      bands: [
+        { upTo: 0, name: "starving", tell: "The rations are gone. The character is starving: cramping, weak, slow to think, and increasingly willing to consider things they would not have considered." },
+        { upTo: 22, name: "rationing", tell: "Food is nearly out. The character is on quarter-rations and thinks about it constantly." },
+        { upTo: 100, name: "fed", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["ration pack", "eat", "ate", "eating", "meal", "meals", "protein paste", "galley"], delta: 26 },
+        { on: "both", words: ["hydroponic*", "food crate", "resupply", "supply cache"], delta: 34 },
+      ],
+    },
+    {
+      id: "water", label: "Water", icon: "💧",
+      min: 0, max: 100, start: 80, perTurn: -1.1,
+      bands: [
+        { upTo: 0, name: "dehydrated", tell: "The water is gone. The character is dangerously dehydrated: cracked lips, dark urine, dizziness, failing concentration." },
+        { upTo: 25, name: "short", tell: "Water is short. The character's mouth is permanently dry and they are rationing every sip." },
+        { upTo: 100, name: "ok", tell: "" },
+      ],
+      triggers: [
+        // "recycler" is deliberately NOT here: it would also match inside
+        // "recycler failure" below and cancel the loss out.
+        { on: "both", words: ["drink", "drank", "drinking", "water ration", "condensate", "ice haul", "purifier"], delta: 32 },
+        { on: "output", words: ["recycler failure", "water loss", "coolant leak"], delta: -18 },
+      ],
+    },
+
+    // ---- Crew -------------------------------------------------------------
+    {
+      id: "hp", label: "Condition", icon: "❤️",
+      min: 0, max: 100, start: 100, perTurn: 0,
+      bands: [
+        { upTo: 0, name: "dead", tell: "The character has died. Narrate the death and its consequences; do not let them act again." },
+        { upTo: 22, name: "critical", tell: "The character is critically injured — bleeding, shocky, barely able to stand. Without treatment they will not last long." },
+        { upTo: 58, name: "injured", tell: "The character is injured and impaired. Movement is slow and painful, and fine work is difficult." },
+        { upTo: 100, name: "well", tell: "" },
+      ],
+      triggers: [
+        // "burn*" is deliberately NOT here: an engine burn is a manoeuvre, and
+        // it would injure the crew every time they changed course.
+        { on: "output", words: ["scald*", "struck", "crush*", "shrapnel", "fracture*", "bleeding", "electrocut*", "frostbite", "concussion"], delta: -17 },
+        { on: "both", words: ["medbay", "medkit", "med kit", "stim", "stims", "sutur*", "treat the wound", "autodoc"], delta: 24 },
+      ],
+    },
+    {
+      id: "rads", label: "Radiation", icon: "☢️",
+      // Inverted and CUMULATIVE: it only ever goes up unless treated.
+      min: 0, max: 100, start: 4, perTurn: 0.2,
+      bands: [
+        { upTo: 20, name: "background", tell: "" },
+        { upTo: 45, name: "exposed", tell: "The character has taken a real dose. Nausea comes in waves and their gums bleed when they clench their jaw." },
+        { upTo: 75, name: "sick", tell: "Radiation sickness has set in: vomiting, hair loss, bruising under the skin, exhaustion that sleep does not touch." },
+        { upTo: 100, name: "lethal", tell: "The character has absorbed a lethal dose. They are visibly dying — describe the failure of their body honestly and without hope of recovery." },
+      ],
+      triggers: [
+        { on: "output", words: ["reactor breach", "radiation", "irradiat*", "hot zone", "solar storm", "unshielded"], delta: 14 },
+        { on: "both", words: ["reactor", "core chamber", "eva", "spacewalk*"], delta: 5 },
+        { on: "both", words: ["anti-rad", "antirad", "chelation", "iodine", "decontaminat*"], delta: -22 },
+      ],
+    },
+    {
+      id: "morale", label: "Morale", icon: "🧠",
+      min: 0, max: 100, start: 72, perTurn: -0.45,
+      bands: [
+        { upTo: 0, name: "broken", tell: "The character has broken. Describe dissociation, fixed stares, and decisions that make no sense to anyone but them." },
+        { upTo: 25, name: "fraying", tell: "The character is coming apart. They hear things in the hull noise, talk to people who are not there, and startle badly." },
+        { upTo: 55, name: "strained", tell: "The character is worn thin by isolation. They are irritable, superstitious about the ship's sounds, and sleeping badly." },
+        { upTo: 100, name: "steady", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["music", "message from home", "recorded message", "sleep", "slept", "shore leave", "hot meal", "coffee"], delta: 16 },
+        { on: "output", words: ["alone", "silence", "no response", "corpse", "body bag", "distress call", "nothing on the scope"], delta: -9 },
+      ],
+    },
+
+    // ---- Cargo and economy -------------------------------------------------
+    {
+      id: "parts", label: "Spare Parts", icon: "🔩",
+      min: 0, max: 60, start: 22, perTurn: 0,
+      bands: [
+        { upTo: 0, name: "none", tell: "There are no spare parts left. Nothing further can be repaired; anything that breaks from here stays broken." },
+        { upTo: 6, name: "scarce", tell: "Spare parts are almost gone. The character is cannibalising non-essential systems to keep essential ones alive." },
+        { upTo: 60, name: "stocked", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["weld*", "patch the hull", "seal the breach", "repair the hull", "jury-rig*", "jury rig*", "cannibalis*", "cannibaliz*"], delta: -6 },
+        { on: "both", words: ["salvag*", "strip the wreck", "scav*", "parts cache", "component crate"], delta: 14 },
+      ],
+    },
+    {
+      id: "credits", label: "Credits", icon: "🪙",
+      min: 0, max: 99999, start: 340, perTurn: 0,
+      bands: [
+        { upTo: 0, name: "broke", tell: "The character has no credits. No station will sell them fuel, air, or docking time." },
+        { upTo: 99999, name: "solvent", tell: "" },
+      ],
+      triggers: [
+        { on: "output", words: ["paid", "bought", "purchase*", "docking fee", "bribe*", "toll"], delta: -60 },
+        { on: "output", words: ["sold", "salvage claim", "bounty", "contract payment", "reward*"], delta: 120 },
+      ],
+    },
+  ],
+
+  // How the AI is told: "context" (accurate, but does nothing on models with
+  // Optimized Context) | "frontMemory" (survives it, lags a turn) | "none".
+  inject: "context",
+
+  // Prefix for the injected block. Keep it bracketed and in whole sentences.
+  injectLabel: "Ship and crew status",
+
+  // Remember a band crossing so the next command answer can mention it.
+  announceBandChanges: true,
+
+  // The story card the player reads and edits.
+  playerCard: true,
+  playerCardTitle: "⚙️ Living Meters",
+
+  // Players type "/status", "/hp +10", "/help".
+  commandPrefix: "/",
+
+  // Ignore a trigger word inside a negated clause: "you do not eat".
+  negationGuard: true,
+
+  // Where triggers are looked for.
+  scanInput: true,
+  scanOutput: true,
+
+  // Multiplies every negative drift. easy 0.5 | normal 1 | hard 1.75.
+  // The player can override this from the card.
+  difficulty: "normal",
+
+  // Print diagnostics to the Console Log panel.
+  debug: false,
+};
+
+
 const MCPV5_VERSION = 5;
 const MCPV5_SCHEMA_VERSION = 3;
 const MCPV5_BUILD_VERSION = "5.3.7";
@@ -45440,38 +45677,16 @@ function MCPV5Create_living_meters() {
     }
   });
 
-/// <reference no-default-lib="true"/>
-/// <reference lib="es2022"/>
-
 // SPDX-License-Identifier: MIT
 
 /* ============================================================================
- * LIVING METERS v1.2.0: a resource framework for AI Dungeon
+ * LIVING METERS v1.2.0
  *
  * Copyright (c) 2026 Oratorian. MIT licensed; see the LICENSE file.
  * You may bundle this into your own script. Keeping this notice is all that
  * is asked.
- * ----------------------------------------------------------------------------
- * Tracks any set of numeric resources (health, hunger, ammo, fuel, sanity,
- * gold, reputation...), drifts them each turn, reacts to what the story says,
- * and tells the AI how the character should feel and behave.
  *
- * The meters are "living" because they move on their own: each one drifts every
- * turn, reacts to what the story says, and is handed to the AI as behaviour to
- * play rather than a number to recite.
- *
- * THREE LAYERS OF CONFIGURATION
- *   1. RM_CONFIG below                 the scenario creator edits this.
- *   2. RM_PRESETS                      ready-made resource sets to start from.
- *   3. The "Living Meters" story card  the PLAYER edits this in-game; it
- *                                      overrides the creator's numbers.
- *
- * The RM_ prefix is the original working name and is kept deliberately: it is
- * short, it collides with nothing, and renaming it would break nobody's saves
- * for no gain.
- *
- * INSTALL: paste this whole file into the Library tab, then paste the three
- * companion files into Input / Context / Output. See README.md.
+ * Configured from the RM_CONFIG block at the top of this file.
  * ==========================================================================*/
 
 // Some globals are not defined in every hook. Establish them before use.
@@ -45483,267 +45698,7 @@ globalThis.storyCards ??= [];
 globalThis.info ??= {};
 
 /* ============================================================================
- * 1. CREATOR CONFIG — edit this block
- * ==========================================================================*/
-
-const RM_CONFIG = {
-  // Start from a preset, then add or override resources below.
-  // "survival" | "fantasy" | "scifi" | "noir" | "mechanic" | "none" |
-
-  // If preset is "none", no resources are added by default and the preset section is ignored.
-  // You must then define all resources and triggers you want in the "resources" array below.
-  // Starting from line 77 and ending on line 261
-  preset: "none",
-
-  // Resources defined here are MERGED over the preset, matched by `id`.
-  // Give an id that isn't in the preset to add a brand-new resource.
-  //
-  // TRIGGERS take plain word lists — you never write a regular expression.
-  //   "coin"    matches the whole word "coin" only
-  //   "loot*"   matches "loot", "looted", "looting", "looter"
-  //   "dead body"  phrases are fine
-  // Matching is always case-insensitive and always respects word boundaries,
-  // so "rest" will not fire on "restaurant". Add the * yourself when you want
-  // word endings to count.
-  //
-  // ==========================================================================
-  // DEEP SPACE — a long-haul salvage run gone wrong.
-  //
-  // Twelve interlocking systems. The design intent is that no single resource
-  // kills you; the ship does, because fixing one thing costs another. A burn
-  // spends fuel AND adds heat. Running the reactor restores power but bakes
-  // the ship and doses the crew. Repairs eat spare parts you cannot replace
-  // out here. Note how several triggers share the same words across different
-  // resources — that is how one narrative event moves three numbers at once.
-  // ==========================================================================
-  resources: [
-
-    // ---- Ship -------------------------------------------------------------
-    {
-      id: "hull", label: "Hull", icon: "🛡️",
-      min: 0, max: 100, start: 100, perTurn: 0,
-      bands: [
-        { upTo: 0, name: "breached", tell: "The hull has failed. The ship is venting to vacuum and is no longer survivable; narrate the decompression and its consequences." },
-        { upTo: 25, name: "critical", tell: "The hull is holed in several places. Bulkheads groan, atmosphere hisses out through patches, and any hard manoeuvre risks tearing it wide open." },
-        { upTo: 60, name: "damaged", tell: "The hull is buckled and patched. Stress fractures creak whenever the ship accelerates." },
-        { upTo: 100, name: "sound", tell: "" },
-      ],
-      triggers: [
-        { on: "output", words: ["hull breach", "micrometeor*", "collision", "ruptur*", "direct hit", "shrapnel", "debris field"], delta: -18 },
-        { on: "both", words: ["weld*", "patch the hull", "hull patch", "seal the breach", "repair the hull"], delta: 20 },
-      ],
-    },
-    {
-      id: "power", label: "Power", icon: "🔋",
-      min: 0, max: 100, start: 88, perTurn: -0.7,
-      bands: [
-        { upTo: 0, name: "dark", tell: "The ship is dead. No lights, no heat, no life support, no doors. Only emergency chemical lamps and whatever is in the character's hands." },
-        { upTo: 18, name: "brownout", tell: "Power is nearly gone. Lights flicker, non-essential systems are offline, and consoles reboot mid-sentence." },
-        { upTo: 50, name: "rationed", tell: "Power is being rationed. Whole decks are dark and the character has to choose which systems to bring up." },
-        { upTo: 100, name: "nominal", tell: "" },
-      ],
-      triggers: [
-        { on: "both", words: ["reactor", "spin up the core", "power cell", "solar array", "recharg*"], delta: 34 },
-        { on: "both", words: ["reroute power", "divert power", "overclock*", "full burn"], delta: -14 },
-        { on: "output", words: ["short circuit", "power surge", "grid failure", "blown coupling"], delta: -20 },
-      ],
-    },
-    {
-      id: "fuel", label: "Fuel", icon: "⛽",
-      min: 0, max: 100, start: 62, perTurn: 0,
-      bands: [
-        { upTo: 0, name: "dry", tell: "The tanks are dry. The ship cannot manoeuvre and is on a ballistic course it cannot change." },
-        { upTo: 15, name: "reserve", tell: "Fuel is down to the reserve. There is enough for one burn, maybe, and nothing after it." },
-        { upTo: 100, name: "ok", tell: "" },
-      ],
-      triggers: [
-        { on: "both", words: ["burn", "burns", "burned", "thrust*", "manoeuvr*", "maneuver*", "course correction"], delta: -13 },
-        { on: "both", words: ["refuel*", "fuel line", "siphon*", "tanker", "hydrogen scoop"], delta: 30 },
-      ],
-    },
-    {
-      id: "heat", label: "Thermal", icon: "🌡️",
-      // Inverted: HIGH is bad. Radiators bleed it off slowly on their own.
-      // min is 15, not 0 — a crewed ship has an ambient floor it cannot go
-      // below, and `min` does not have to be zero.
-      min: 15, max: 100, start: 28, perTurn: -0.8,
-      bands: [
-        { upTo: 35, name: "cool", tell: "" },
-        { upTo: 70, name: "warm", tell: "The ship is running hot. Deck plating is uncomfortable to touch and the air tastes of scorched dust." },
-        { upTo: 100, name: "overheating", tell: "The ship is overheating badly. Coolant alarms are constant, sweat runs freely, and electronics are failing from thermal stress." },
-      ],
-      triggers: [
-        { on: "both", words: ["reactor", "overclock*", "full burn", "weapons fire"], delta: 13 },
-        { on: "both", words: ["radiator*", "vent heat", "coolant", "shut down the core", "power down"], delta: -22 },
-        { on: "output", words: ["stellar flare", "close approach", "sunward"], delta: 16 },
-      ],
-    },
-
-    // ---- Life support -----------------------------------------------------
-    {
-      id: "o2", label: "Oxygen", icon: "🫁",
-      min: 0, max: 100, start: 100, perTurn: -1.3,
-      bands: [
-        { upTo: 0, name: "anoxic", tell: "There is no breathable air left. The character is suffocating: vision tunnelling, lungs burning, seconds of consciousness remaining." },
-        { upTo: 20, name: "critical", tell: "Oxygen is critically low. Every breath is shallow and insufficient; the character is light-headed and their judgement is visibly slipping." },
-        { upTo: 45, name: "thin", tell: "The air is thin and stale. The character tires quickly and has a persistent headache." },
-        { upTo: 100, name: "breathable", tell: "" },
-      ],
-      triggers: [
-        { on: "both", words: ["scrubber*", "oxygen candle", "o2 tank", "air supply", "recharge the tanks", "algae tank"], delta: 40 },
-        { on: "both", words: ["eva", "spacewalk*", "airlock cycle", "suit up"], delta: -12 },
-        // Not bare "vent*" or "leak*": those fire on "ventilation hums" and on
-        // a coolant leak, neither of which costs anyone their air.
-        { on: "output", words: ["hull breach", "ruptur*", "decompress*", "atmosphere leak", "air leak", "blown seal"], delta: -22 },
-      ],
-    },
-    {
-      id: "food", label: "Rations", icon: "🍱",
-      min: 0, max: 100, start: 74, perTurn: -0.9,
-      bands: [
-        { upTo: 0, name: "starving", tell: "The rations are gone. The character is starving: cramping, weak, slow to think, and increasingly willing to consider things they would not have considered." },
-        { upTo: 22, name: "rationing", tell: "Food is nearly out. The character is on quarter-rations and thinks about it constantly." },
-        { upTo: 100, name: "fed", tell: "" },
-      ],
-      triggers: [
-        { on: "both", words: ["ration pack", "eat", "ate", "eating", "meal", "meals", "protein paste", "galley"], delta: 26 },
-        { on: "both", words: ["hydroponic*", "food crate", "resupply", "supply cache"], delta: 34 },
-      ],
-    },
-    {
-      id: "water", label: "Water", icon: "💧",
-      min: 0, max: 100, start: 80, perTurn: -1.1,
-      bands: [
-        { upTo: 0, name: "dehydrated", tell: "The water is gone. The character is dangerously dehydrated: cracked lips, dark urine, dizziness, failing concentration." },
-        { upTo: 25, name: "short", tell: "Water is short. The character's mouth is permanently dry and they are rationing every sip." },
-        { upTo: 100, name: "ok", tell: "" },
-      ],
-      triggers: [
-        // "recycler" is deliberately NOT here: it would also match inside
-        // "recycler failure" below and cancel the loss out.
-        { on: "both", words: ["drink", "drank", "drinking", "water ration", "condensate", "ice haul", "purifier"], delta: 32 },
-        { on: "output", words: ["recycler failure", "water loss", "coolant leak"], delta: -18 },
-      ],
-    },
-
-    // ---- Crew -------------------------------------------------------------
-    {
-      id: "hp", label: "Condition", icon: "❤️",
-      min: 0, max: 100, start: 100, perTurn: 0,
-      bands: [
-        { upTo: 0, name: "dead", tell: "The character has died. Narrate the death and its consequences; do not let them act again." },
-        { upTo: 22, name: "critical", tell: "The character is critically injured — bleeding, shocky, barely able to stand. Without treatment they will not last long." },
-        { upTo: 58, name: "injured", tell: "The character is injured and impaired. Movement is slow and painful, and fine work is difficult." },
-        { upTo: 100, name: "well", tell: "" },
-      ],
-      triggers: [
-        // "burn*" is deliberately NOT here: an engine burn is a manoeuvre, and
-        // it would injure the crew every time they changed course.
-        { on: "output", words: ["scald*", "struck", "crush*", "shrapnel", "fracture*", "bleeding", "electrocut*", "frostbite", "concussion"], delta: -17 },
-        { on: "both", words: ["medbay", "medkit", "med kit", "stim", "stims", "sutur*", "treat the wound", "autodoc"], delta: 24 },
-      ],
-    },
-    {
-      id: "rads", label: "Radiation", icon: "☢️",
-      // Inverted and CUMULATIVE: it only ever goes up unless treated.
-      min: 0, max: 100, start: 4, perTurn: 0.2,
-      bands: [
-        { upTo: 20, name: "background", tell: "" },
-        { upTo: 45, name: "exposed", tell: "The character has taken a real dose. Nausea comes in waves and their gums bleed when they clench their jaw." },
-        { upTo: 75, name: "sick", tell: "Radiation sickness has set in: vomiting, hair loss, bruising under the skin, exhaustion that sleep does not touch." },
-        { upTo: 100, name: "lethal", tell: "The character has absorbed a lethal dose. They are visibly dying — describe the failure of their body honestly and without hope of recovery." },
-      ],
-      triggers: [
-        { on: "output", words: ["reactor breach", "radiation", "irradiat*", "hot zone", "solar storm", "unshielded"], delta: 14 },
-        { on: "both", words: ["reactor", "core chamber", "eva", "spacewalk*"], delta: 5 },
-        { on: "both", words: ["anti-rad", "antirad", "chelation", "iodine", "decontaminat*"], delta: -22 },
-      ],
-    },
-    {
-      id: "morale", label: "Morale", icon: "🧠",
-      min: 0, max: 100, start: 72, perTurn: -0.45,
-      bands: [
-        { upTo: 0, name: "broken", tell: "The character has broken. Describe dissociation, fixed stares, and decisions that make no sense to anyone but them." },
-        { upTo: 25, name: "fraying", tell: "The character is coming apart. They hear things in the hull noise, talk to people who are not there, and startle badly." },
-        { upTo: 55, name: "strained", tell: "The character is worn thin by isolation. They are irritable, superstitious about the ship's sounds, and sleeping badly." },
-        { upTo: 100, name: "steady", tell: "" },
-      ],
-      triggers: [
-        { on: "both", words: ["music", "message from home", "recorded message", "sleep", "slept", "shore leave", "hot meal", "coffee"], delta: 16 },
-        { on: "output", words: ["alone", "silence", "no response", "corpse", "body bag", "distress call", "nothing on the scope"], delta: -9 },
-      ],
-    },
-
-    // ---- Cargo and economy -------------------------------------------------
-    {
-      id: "parts", label: "Spare Parts", icon: "🔩",
-      min: 0, max: 60, start: 22, perTurn: 0,
-      bands: [
-        { upTo: 0, name: "none", tell: "There are no spare parts left. Nothing further can be repaired; anything that breaks from here stays broken." },
-        { upTo: 6, name: "scarce", tell: "Spare parts are almost gone. The character is cannibalising non-essential systems to keep essential ones alive." },
-        { upTo: 60, name: "stocked", tell: "" },
-      ],
-      triggers: [
-        { on: "both", words: ["weld*", "patch the hull", "seal the breach", "repair the hull", "jury-rig*", "jury rig*", "cannibalis*", "cannibaliz*"], delta: -6 },
-        { on: "both", words: ["salvag*", "strip the wreck", "scav*", "parts cache", "component crate"], delta: 14 },
-      ],
-    },
-    {
-      id: "credits", label: "Credits", icon: "🪙",
-      min: 0, max: 99999, start: 340, perTurn: 0,
-      bands: [
-        { upTo: 0, name: "broke", tell: "The character has no credits. No station will sell them fuel, air, or docking time." },
-        { upTo: 99999, name: "solvent", tell: "" },
-      ],
-      triggers: [
-        { on: "output", words: ["paid", "bought", "purchase*", "docking fee", "bribe*", "toll"], delta: -60 },
-        { on: "output", words: ["sold", "salvage claim", "bounty", "contract payment", "reward*"], delta: 120 },
-      ],
-    },
-  ],
-
-  // How the AI is told about the resources.
-  //   "context"     — appended to the model context. Accurate and current.
-  //                   SILENTLY DOES NOTHING on models with Optimized Context.
-  //   "frontMemory" — written to state.memory.frontMemory. Survives Optimized
-  //                   Context, but lags one turn behind.
-  //   "none"        — track only, never tell the AI.
-  inject: "context",
-
-  // Prefix for the injected block. Keep it bracketed and in complete sentences:
-  // an unterminated fragment invites the AI to finish it.
-  injectLabel: "Ship and crew status",
-
-  // Remember a band crossing so the next command answer can mention it.
-  // Nothing is pushed at the player unasked; see REPORTING at the top.
-  announceBandChanges: true,
-
-  // Maintain a "Living Meters" story card the player can read and edit.
-  playerCard: true,
-  playerCardTitle: "⚙️ Living Meters",
-
-  // Command prefix. Players type "/status", "/hp +10", etc.
-  commandPrefix: "/",
-
-  // Ignore a trigger word sitting inside a negated clause, so "you do not
-  // eat" no longer feeds the character. A negator only reaches back to the
-  // last sentence break. Set false for the old behaviour.
-  negationGuard: true,
-
-  // Scan player input as well as AI output for trigger matches.
-  scanInput: true,
-  scanOutput: true,
-
-  // Multiplies every negative drift. The player can override this in the card.
-  // easy 0.5 | normal 1 | hard 1.75
-  difficulty: "normal",
-
-  // Print diagnostics to the Console Log panel.
-  debug: false,
-};
-
-/* ============================================================================
- * 2. PRESETS
+ * 1. PRESETS — ready-made resource sets RM_CONFIG.preset can start from.
  * ==========================================================================*/
 
 const RM_PRESETS = {
@@ -46098,7 +46053,7 @@ const RM_PRESETS = {
 };
 
 /* ============================================================================
- * 3. FRAMEWORK — you should not need to edit below this line.
+ * 2. FRAMEWORK — you should not need to edit below this line.
  * ==========================================================================*/
 
 const RM = (function () {
