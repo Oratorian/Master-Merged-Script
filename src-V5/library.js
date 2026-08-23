@@ -1,264 +1,22 @@
 /* ============================================================
-   MASTER SCRIPT V5.3.7 — COMPACT EDITION (EXP.)
-   Hi Hi! Enjoy the SCRIPT!
+   MASTER SCRIPT V5.3.8
+   --- Please enjoy ---
    --- Thank you for all your hard work and feedback ---
    ============================================================ */
 
-/* ============================================================================
-   MODULE CONFIG — the bundled scripts are configured from here.
-   Everything below this block is machinery; you do not need to read it.
-   ============================================================================ */
-
-/* ---- LIVING METERS ---------------------------------------------------------
-   What the meters track, how fast they drift, what moves them, and what the AI
-   is told when they change. Players can override the numbers in-game from the
-   "⚙️ Living Meters" story card. */
-
-const RM_CONFIG = {
-  // Starting set: "survival" | "fantasy" | "scifi" | "noir" | "mechanic" | "none".
-  // "none" means the resources array below is the whole config.
-  preset: "none",
-
-  // Merged over the preset, matched by id. A new id adds a new resource.
-  // Triggers take word lists, never regexes: "coin" matches that word only,
-  // "loot*" also matches looted/looting, "dead body" matches the phrase.
-  // Always case-insensitive, always on word boundaries.
-  //
-  // DEEP SPACE: twelve interlocking systems, where fixing one costs another.
-  resources: [
-
-    // ---- Ship -------------------------------------------------------------
-    {
-      id: "hull", label: "Hull", icon: "🛡️",
-      min: 0, max: 100, start: 100, perTurn: 0,
-      bands: [
-        { upTo: 0, name: "breached", tell: "The hull has failed. The ship is venting to vacuum and is no longer survivable; narrate the decompression and its consequences." },
-        { upTo: 25, name: "critical", tell: "The hull is holed in several places. Bulkheads groan, atmosphere hisses out through patches, and any hard manoeuvre risks tearing it wide open." },
-        { upTo: 60, name: "damaged", tell: "The hull is buckled and patched. Stress fractures creak whenever the ship accelerates." },
-        { upTo: 100, name: "sound", tell: "" },
-      ],
-      triggers: [
-        { on: "output", words: ["hull breach", "micrometeor*", "collision", "ruptur*", "direct hit", "shrapnel", "debris field"], delta: -18 },
-        { on: "both", words: ["weld*", "patch the hull", "hull patch", "seal the breach", "repair the hull"], delta: 20 },
-      ],
-    },
-    {
-      id: "power", label: "Power", icon: "🔋",
-      min: 0, max: 100, start: 88, perTurn: -0.7,
-      bands: [
-        { upTo: 0, name: "dark", tell: "The ship is dead. No lights, no heat, no life support, no doors. Only emergency chemical lamps and whatever is in the character's hands." },
-        { upTo: 18, name: "brownout", tell: "Power is nearly gone. Lights flicker, non-essential systems are offline, and consoles reboot mid-sentence." },
-        { upTo: 50, name: "rationed", tell: "Power is being rationed. Whole decks are dark and the character has to choose which systems to bring up." },
-        { upTo: 100, name: "nominal", tell: "" },
-      ],
-      triggers: [
-        { on: "both", words: ["reactor", "spin up the core", "power cell", "solar array", "recharg*"], delta: 34 },
-        { on: "both", words: ["reroute power", "divert power", "overclock*", "full burn"], delta: -14 },
-        { on: "output", words: ["short circuit", "power surge", "grid failure", "blown coupling"], delta: -20 },
-      ],
-    },
-    {
-      id: "fuel", label: "Fuel", icon: "⛽",
-      min: 0, max: 100, start: 62, perTurn: 0,
-      bands: [
-        { upTo: 0, name: "dry", tell: "The tanks are dry. The ship cannot manoeuvre and is on a ballistic course it cannot change." },
-        { upTo: 15, name: "reserve", tell: "Fuel is down to the reserve. There is enough for one burn, maybe, and nothing after it." },
-        { upTo: 100, name: "ok", tell: "" },
-      ],
-      triggers: [
-        { on: "both", words: ["burn", "burns", "burned", "thrust*", "manoeuvr*", "maneuver*", "course correction"], delta: -13 },
-        { on: "both", words: ["refuel*", "fuel line", "siphon*", "tanker", "hydrogen scoop"], delta: 30 },
-      ],
-    },
-    {
-      id: "heat", label: "Thermal", icon: "🌡️",
-      // Inverted: HIGH is bad. min need not be 0; a crewed ship has a floor.
-      min: 15, max: 100, start: 28, perTurn: -0.8,
-      bands: [
-        { upTo: 35, name: "cool", tell: "" },
-        { upTo: 70, name: "warm", tell: "The ship is running hot. Deck plating is uncomfortable to touch and the air tastes of scorched dust." },
-        { upTo: 100, name: "overheating", tell: "The ship is overheating badly. Coolant alarms are constant, sweat runs freely, and electronics are failing from thermal stress." },
-      ],
-      triggers: [
-        { on: "both", words: ["reactor", "overclock*", "full burn", "weapons fire"], delta: 13 },
-        { on: "both", words: ["radiator*", "vent heat", "coolant", "shut down the core", "power down"], delta: -22 },
-        { on: "output", words: ["stellar flare", "close approach", "sunward"], delta: 16 },
-      ],
-    },
-
-    // ---- Life support -----------------------------------------------------
-    {
-      id: "o2", label: "Oxygen", icon: "🫁",
-      min: 0, max: 100, start: 100, perTurn: -1.3,
-      bands: [
-        { upTo: 0, name: "anoxic", tell: "There is no breathable air left. The character is suffocating: vision tunnelling, lungs burning, seconds of consciousness remaining." },
-        { upTo: 20, name: "critical", tell: "Oxygen is critically low. Every breath is shallow and insufficient; the character is light-headed and their judgement is visibly slipping." },
-        { upTo: 45, name: "thin", tell: "The air is thin and stale. The character tires quickly and has a persistent headache." },
-        { upTo: 100, name: "breathable", tell: "" },
-      ],
-      triggers: [
-        { on: "both", words: ["scrubber*", "oxygen candle", "o2 tank", "air supply", "recharge the tanks", "algae tank"], delta: 40 },
-        { on: "both", words: ["eva", "spacewalk*", "airlock cycle", "suit up"], delta: -12 },
-        // Not bare "vent*"/"leak*": those fire on ventilation and coolant.
-        { on: "output", words: ["hull breach", "ruptur*", "decompress*", "atmosphere leak", "air leak", "blown seal"], delta: -22 },
-      ],
-    },
-    {
-      id: "food", label: "Rations", icon: "🍱",
-      min: 0, max: 100, start: 74, perTurn: -0.9,
-      bands: [
-        { upTo: 0, name: "starving", tell: "The rations are gone. The character is starving: cramping, weak, slow to think, and increasingly willing to consider things they would not have considered." },
-        { upTo: 22, name: "rationing", tell: "Food is nearly out. The character is on quarter-rations and thinks about it constantly." },
-        { upTo: 100, name: "fed", tell: "" },
-      ],
-      triggers: [
-        { on: "both", words: ["ration pack", "eat", "ate", "eating", "meal", "meals", "protein paste", "galley"], delta: 26 },
-        { on: "both", words: ["hydroponic*", "food crate", "resupply", "supply cache"], delta: 34 },
-      ],
-    },
-    {
-      id: "water", label: "Water", icon: "💧",
-      min: 0, max: 100, start: 80, perTurn: -1.1,
-      bands: [
-        { upTo: 0, name: "dehydrated", tell: "The water is gone. The character is dangerously dehydrated: cracked lips, dark urine, dizziness, failing concentration." },
-        { upTo: 25, name: "short", tell: "Water is short. The character's mouth is permanently dry and they are rationing every sip." },
-        { upTo: 100, name: "ok", tell: "" },
-      ],
-      triggers: [
-        // "recycler" is deliberately NOT here: it would also match inside
-        // "recycler failure" below and cancel the loss out.
-        { on: "both", words: ["drink", "drank", "drinking", "water ration", "condensate", "ice haul", "purifier"], delta: 32 },
-        { on: "output", words: ["recycler failure", "water loss", "coolant leak"], delta: -18 },
-      ],
-    },
-
-    // ---- Crew -------------------------------------------------------------
-    {
-      id: "hp", label: "Condition", icon: "❤️",
-      min: 0, max: 100, start: 100, perTurn: 0,
-      bands: [
-        { upTo: 0, name: "dead", tell: "The character has died. Narrate the death and its consequences; do not let them act again." },
-        { upTo: 22, name: "critical", tell: "The character is critically injured — bleeding, shocky, barely able to stand. Without treatment they will not last long." },
-        { upTo: 58, name: "injured", tell: "The character is injured and impaired. Movement is slow and painful, and fine work is difficult." },
-        { upTo: 100, name: "well", tell: "" },
-      ],
-      triggers: [
-        // "burn*" is deliberately NOT here: an engine burn is a manoeuvre, and
-        // it would injure the crew every time they changed course.
-        { on: "output", words: ["scald*", "struck", "crush*", "shrapnel", "fracture*", "bleeding", "electrocut*", "frostbite", "concussion"], delta: -17 },
-        { on: "both", words: ["medbay", "medkit", "med kit", "stim", "stims", "sutur*", "treat the wound", "autodoc"], delta: 24 },
-      ],
-    },
-    {
-      id: "rads", label: "Radiation", icon: "☢️",
-      // Inverted and CUMULATIVE: it only ever goes up unless treated.
-      min: 0, max: 100, start: 4, perTurn: 0.2,
-      bands: [
-        { upTo: 20, name: "background", tell: "" },
-        { upTo: 45, name: "exposed", tell: "The character has taken a real dose. Nausea comes in waves and their gums bleed when they clench their jaw." },
-        { upTo: 75, name: "sick", tell: "Radiation sickness has set in: vomiting, hair loss, bruising under the skin, exhaustion that sleep does not touch." },
-        { upTo: 100, name: "lethal", tell: "The character has absorbed a lethal dose. They are visibly dying — describe the failure of their body honestly and without hope of recovery." },
-      ],
-      triggers: [
-        { on: "output", words: ["reactor breach", "radiation", "irradiat*", "hot zone", "solar storm", "unshielded"], delta: 14 },
-        { on: "both", words: ["reactor", "core chamber", "eva", "spacewalk*"], delta: 5 },
-        { on: "both", words: ["anti-rad", "antirad", "chelation", "iodine", "decontaminat*"], delta: -22 },
-      ],
-    },
-    {
-      id: "morale", label: "Morale", icon: "🧠",
-      min: 0, max: 100, start: 72, perTurn: -0.45,
-      bands: [
-        { upTo: 0, name: "broken", tell: "The character has broken. Describe dissociation, fixed stares, and decisions that make no sense to anyone but them." },
-        { upTo: 25, name: "fraying", tell: "The character is coming apart. They hear things in the hull noise, talk to people who are not there, and startle badly." },
-        { upTo: 55, name: "strained", tell: "The character is worn thin by isolation. They are irritable, superstitious about the ship's sounds, and sleeping badly." },
-        { upTo: 100, name: "steady", tell: "" },
-      ],
-      triggers: [
-        { on: "both", words: ["music", "message from home", "recorded message", "sleep", "slept", "shore leave", "hot meal", "coffee"], delta: 16 },
-        { on: "output", words: ["alone", "silence", "no response", "corpse", "body bag", "distress call", "nothing on the scope"], delta: -9 },
-      ],
-    },
-
-    // ---- Cargo and economy -------------------------------------------------
-    {
-      id: "parts", label: "Spare Parts", icon: "🔩",
-      min: 0, max: 60, start: 22, perTurn: 0,
-      bands: [
-        { upTo: 0, name: "none", tell: "There are no spare parts left. Nothing further can be repaired; anything that breaks from here stays broken." },
-        { upTo: 6, name: "scarce", tell: "Spare parts are almost gone. The character is cannibalising non-essential systems to keep essential ones alive." },
-        { upTo: 60, name: "stocked", tell: "" },
-      ],
-      triggers: [
-        { on: "both", words: ["weld*", "patch the hull", "seal the breach", "repair the hull", "jury-rig*", "jury rig*", "cannibalis*", "cannibaliz*"], delta: -6 },
-        { on: "both", words: ["salvag*", "strip the wreck", "scav*", "parts cache", "component crate"], delta: 14 },
-      ],
-    },
-    {
-      id: "credits", label: "Credits", icon: "🪙",
-      min: 0, max: 99999, start: 340, perTurn: 0,
-      bands: [
-        { upTo: 0, name: "broke", tell: "The character has no credits. No station will sell them fuel, air, or docking time." },
-        { upTo: 99999, name: "solvent", tell: "" },
-      ],
-      triggers: [
-        { on: "output", words: ["paid", "bought", "purchase*", "docking fee", "bribe*", "toll"], delta: -60 },
-        { on: "output", words: ["sold", "salvage claim", "bounty", "contract payment", "reward*"], delta: 120 },
-      ],
-    },
-  ],
-
-  // How the AI is told: "context" (accurate, but does nothing on models with
-  // Optimized Context) | "frontMemory" (survives it, lags a turn) | "none".
-  inject: "context",
-
-  // Take this module's own command answers back out of the context window.
-  // They are delivered as story output, so they land in the history and would
-  // otherwise be read back to the model on every turn that follows.
-  hideAnswersFromAI: true,
-
-  // Prefix for the injected block. Keep it bracketed and in whole sentences.
-  injectLabel: "Ship and crew status",
-
-  // Remember a band crossing so the next command answer can mention it.
-  announceBandChanges: true,
-
-  // The story card the player reads and edits.
-  playerCard: true,
-  playerCardTitle: "⚙️ Living Meters",
-
-  // Players type "/status", "/hp +10", "/help".
-  commandPrefix: "/",
-
-  // Ignore a trigger word inside a negated clause: "you do not eat".
-  negationGuard: true,
-
-  // Where triggers are looked for.
-  scanInput: true,
-  scanOutput: true,
-
-  // Multiplies every negative drift. easy 0.5 | normal 1 | hard 1.75.
-  // The player can override this from the card.
-  difficulty: "normal",
-
-  // Print diagnostics to the Console Log panel.
-  debug: false,
-};
-
-
 const MCPV5_VERSION = 5;
 const MCPV5_SCHEMA_VERSION = 3;
-const MCPV5_BUILD_VERSION = "5.3.7";
-const MCPV5_PATCH = "5.3.7-realmheart-context-anchor-cc-v2.01";
+const MCPV5_BUILD_VERSION = "5.3.8";
+const MCPV5_PATCH = "5.3.8-lm1.2-slowburn-outcome-rolls";
 const MCPV5_CARD_KEYS = "__MCP_EXACT_SCRIPT_COLLECTION__";
 const MCPV5_CARD_TITLE = "⚙️ Master Script Control Panel";
 const MCPV5_CARD_TYPE = "_MCP_V5_";
 const MCPV5_CONTROL_ENTRY_LIMIT = 2000;
-const MCPV5_PROFILE_NAMES = {"inner_self":"Inner Self","auto_cards":"Auto-Cards","living_characters":"Living Characters","living_meters":"Living Meters","story_card_extension":"Story Card Extension","true_auto_stats":"True Automatic Stats","story_arc_engine":"Story Arc Engine","narrative_governor":"Narrative Governor","stackable_inventory":"Stackable Inventory","realmheart":"RealmHeart","character_continuity":"Character Continuity","ar":"AR","usc_e":"USC-E"};
-const MCPV5_PROFILE_ORDER = ["inner_self","auto_cards","living_characters","living_meters","story_card_extension","true_auto_stats","story_arc_engine","narrative_governor","stackable_inventory","realmheart","character_continuity","ar","usc_e"];
+const MCPV5_PROFILE_NAMES = {"inner_self":"Inner Self","auto_cards":"Auto-Cards","living_characters":"Living Characters","slow_burn":"Slow Burn","living_meters":"Living Meters","story_card_extension":"Story Card Extension","true_auto_stats":"True Automatic Stats","story_arc_engine":"Story Arc Engine","narrative_governor":"Narrative Governor","stackable_inventory":"Stackable Inventory","realmheart":"RealmHeart","character_continuity":"Character Continuity","ar":"AR","usc_e":"USC-E","dice_roll":"Dice Roll","coin_flip":"Coin Flip"};
+const MCPV5_PROFILE_ORDER = ["inner_self","auto_cards","living_characters","slow_burn","living_meters","story_card_extension","true_auto_stats","story_arc_engine","narrative_governor","stackable_inventory","realmheart","character_continuity","ar","usc_e","dice_roll","coin_flip"];
 
 const MCPV5_INPUT_ORDER = [
-  "living_meters", "inner_self", "auto_cards", "living_characters",
+  "living_meters", "slow_burn", "inner_self", "auto_cards", "living_characters",
   "true_auto_stats", "story_arc_engine", "narrative_governor",
   "stackable_inventory", "realmheart", "character_continuity"
 ];
@@ -274,7 +32,8 @@ const MCPV5_OUTPUT_ORDER = [
   "inner_self", "auto_cards", "living_characters",
   "living_meters", "true_auto_stats", "story_arc_engine",
   "narrative_governor", "stackable_inventory", "realmheart",
-  "character_continuity", "ar", "usc_e"
+  "character_continuity", "ar", "usc_e", "slow_burn",
+  "dice_roll", "coin_flip"
 ];
 
 const MCPV5_INVENTORY_CARD_MODULES = [
@@ -300,6 +59,7 @@ const MCPV5_MODULE_STATE_KEYS = {
   inner_self: ["AutoCards", "InnerSelf", "LSIv2", "entry", "mind", "promptDragon", "showAPI", "willStop"],
   auto_cards: ["AutoCards", "InnerSelf", "LSIv2", "entry", "mind", "promptDragon", "showAPI", "willStop"],
   living_characters: ["chaosGoblinV2", "livingThoughts"],
+  slow_burn: ["mcpSlowBurn"],
   living_meters: ["RM"],
   story_card_extension: ["mcpStoryCardExtension"],
   true_auto_stats: [
@@ -346,24 +106,27 @@ const MCPV5_MODULE_STATE_KEYS = {
 const MCPV5_DEFAULT_TIMINGS = {
   input: {
     inner_self: 120, auto_cards: 90, living_characters: 80,
-    living_meters: 45, story_card_extension: 5,
+    slow_burn: 20, living_meters: 50, story_card_extension: 5,
     true_auto_stats: 110, story_arc_engine: 35, narrative_governor: 35,
     stackable_inventory: 90, realmheart: 115,
-    character_continuity: 150, ar: 1, usc_e: 1
+    character_continuity: 150, ar: 1, usc_e: 1,
+    dice_roll: 1, coin_flip: 1
   },
   context: {
     inner_self: 190, auto_cards: 130, living_characters: 120,
-    living_meters: 70, story_card_extension: 175,
+    slow_burn: 1, living_meters: 75, story_card_extension: 175,
     true_auto_stats: 100, story_arc_engine: 60, narrative_governor: 55,
     stackable_inventory: 105, realmheart: 135,
-    character_continuity: 220, ar: 1, usc_e: 1
+    character_continuity: 220, ar: 1, usc_e: 1,
+    dice_roll: 1, coin_flip: 1
   },
   output: {
     inner_self: 190, auto_cards: 135, living_characters: 115,
-    living_meters: 60, story_card_extension: 5,
+    slow_burn: 25, living_meters: 65, story_card_extension: 5,
     true_auto_stats: 145, story_arc_engine: 75, narrative_governor: 55,
     stackable_inventory: 145, realmheart: 165,
-    character_continuity: 230, ar: 75, usc_e: 35
+    character_continuity: 230, ar: 75, usc_e: 35,
+    dice_roll: 8, coin_flip: 6
   }
 };
 
@@ -372,6 +135,7 @@ const MCPV5_MODULE_CAPABILITIES = {
   inner_self: ["npcMind", "npcAction"],
   auto_cards: ["storyCards"],
   living_characters: ["npcAction", "npcMind", "npcFacts"],
+  slow_burn: ["relationshipPacing"],
   living_meters: ["resourceMeters"],
   story_card_extension: ["storyCardRecall"],
   true_auto_stats: ["stats", "inventory"],
@@ -379,7 +143,9 @@ const MCPV5_MODULE_CAPABILITIES = {
   narrative_governor: ["scenePacing", "macroPacing", "relationshipPacing"],
   stackable_inventory: ["inventory", "inventoryInterface"],
   realmheart: ["economy", "inventory"],
-  character_continuity: ["npcFacts", "npcMind", "npcAction"]
+  character_continuity: ["npcFacts", "npcMind", "npcAction"],
+  dice_roll: ["outcomeRoll"],
+  coin_flip: ["outcomeRoll"]
 };
 
 const MCPV5_PRIMARY_CONTEXT_CAPABILITY = {
@@ -408,6 +174,7 @@ const MCPV5_CAPABILITY_PLAN_FIELDS = {
   scenePacing: "scenePacingAuthority",
   relationshipPacing: "relationshipPacingAuthority",
   storyCards: "storyCardAuthority",
+  outcomeRoll: "outcomeRollAuthority",
 };
 
 function MCPV5ModuleCapabilities(moduleId) {
@@ -1051,6 +818,7 @@ function MCPV5DefaultSettings() {
     macroPacingAuthority: "Automatic",
     scenePacingAuthority: "Automatic",
     relationshipPacingAuthority: "Automatic",
+    outcomeRollAuthority: "Automatic",
     workloadGuard: true,
     hookBudgetMs: 1450,
     hookSafetyMarginMs: 180,
@@ -1244,7 +1012,12 @@ function MCPV5BuildPlan(enabled, settings) {
     relationshipPacingAuthority: MCPV5Choose(
       enabled,
       settings.relationshipPacingAuthority,
-      ["narrative_governor"]
+      ["slow_burn", "narrative_governor"]
+    ),
+    outcomeRollAuthority: MCPV5Choose(
+      enabled,
+      settings.outcomeRollAuthority,
+      ["dice_roll", "coin_flip"]
     ),
     inventoryCardCooperative: false,
     overlaps: {},
@@ -1263,7 +1036,10 @@ function MCPV5BuildPlan(enabled, settings) {
     "inner_self", "living_characters", "character_continuity"
   ].filter(id => enabled[id] === true);
   plan.overlaps.pacing = [
-    "story_arc_engine", "narrative_governor"
+    "story_arc_engine", "narrative_governor", "slow_burn"
+  ].filter(id => enabled[id] === true);
+  plan.overlaps.outcome = [
+    "dice_roll", "coin_flip"
   ].filter(id => enabled[id] === true);
 
   for (let i = 0; i < selected.length; i++) {
@@ -1300,6 +1076,7 @@ function MCPV5PlanSummary(plan) {
     "Macro pacing: " + MCPV5Name(plan.macroPacingAuthority),
     "Scene pacing: " + MCPV5Name(plan.scenePacingAuthority),
     "Relationship pacing: " + MCPV5Name(plan.relationshipPacingAuthority),
+    "Outcome roll: " + MCPV5Name(plan.outcomeRollAuthority),
     "Visible output: Compatibility Host broker"
   ];
 
@@ -1322,6 +1099,7 @@ function MCPV5ConflictStatus(plan) {
   const inventory = plan.overlaps.inventory || [];
   const npc = plan.overlaps.npc || [];
   const pacing = plan.overlaps.pacing || [];
+  const outcome = plan.overlaps.outcome || [];
 
   if (inventory.length > 1) {
     lines.push(
@@ -1342,7 +1120,13 @@ function MCPV5ConflictStatus(plan) {
       "Resolved: macro, scene, and relationship pacing use separate authorities."
     );
   }
-  if (plan.mode === "Legacy Exact" && (inventory.length > 1 || npc.length > 1 || pacing.length > 1)) {
+  if (outcome.length > 1) {
+    lines.push(
+      "Resolved: one Outcome Roll authority decorates each visible response (" +
+      MCPV5Name(plan.outcomeRollAuthority) + ")."
+    );
+  }
+  if (plan.mode === "Legacy Exact" && (inventory.length > 1 || npc.length > 1 || pacing.length > 1 || outcome.length > 1)) {
     lines.push("Warning: Legacy Exact permits original sequential overlap.");
   }
   if (!lines.length) lines.push("No overlapping capability groups selected.");
@@ -1371,7 +1155,7 @@ function MCPV5CanonicalEntry(enabled, settings, plan, status) {
     "╔══════════════════════════════════════════════════════╗",
     "║              MASTER SCRIPT CONTROL PANEL             ║",
     "╚══════════════════════════════════════════════════════╝",
-    "Build 5.3.7  •  " + enabledNames.length + "/" + MCPV5_PROFILE_ORDER.length + " scripts enabled",
+    "Build 5.3.8  •  " + enabledNames.length + "/" + MCPV5_PROFILE_ORDER.length + " scripts enabled",
     "",
     "⚡ QUICK ACTIONS",
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -1386,6 +1170,7 @@ function MCPV5CanonicalEntry(enabled, settings, plan, status) {
     "Auto-Cards: " + bool(enabled.auto_cards),
     "Living Characters: " + bool(enabled.living_characters),
     "Character Continuity: " + bool(enabled.character_continuity),
+    "Slow Burn: " + bool(enabled.slow_burn),
     "",
     "# STORY • WORLD • PACING",
     "Story Card Extension: " + bool(enabled.story_card_extension),
@@ -1398,10 +1183,12 @@ function MCPV5CanonicalEntry(enabled, settings, plan, status) {
     "Stackable Inventory: " + bool(enabled.stackable_inventory),
     "RealmHeart: " + bool(enabled.realmheart),
     "",
-    "# OUTPUT CLEANUP",
-    "# AR = anti-repetition. USC-E = cliché / banned-phrase cleanup.",
+    "# OUTPUT CLEANUP • OUTCOME",
+    "# AR/USC-E clean prose. Dice/Coin are mutually arbitrated.",
     "AR: " + bool(enabled.ar),
     "USC-E: " + bool(enabled.usc_e),
+    "Dice Roll: " + bool(enabled.dice_roll),
+    "Coin Flip: " + bool(enabled.coin_flip),
     "",
     "🛡️ RECOMMENDED COMPATIBILITY SETTINGS",
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -1421,6 +1208,7 @@ function MCPV5CanonicalEntry(enabled, settings, plan, status) {
     "Macro Pacing Authority: " + field(settings.macroPacingAuthority, "Automatic", 40),
     "Scene Pacing Authority: " + field(settings.scenePacingAuthority, "Automatic", 40),
     "Relationship Pacing Authority: " + field(settings.relationshipPacingAuthority, "Automatic", 40),
+    "Outcome Roll Authority: " + field(settings.outcomeRollAuthority, "Automatic", 40),
     "",
     "⏱️ PERFORMANCE & TROUBLESHOOTING",
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -1599,6 +1387,11 @@ function MCPV5SyncControls() {
       entry,
       "Relationship Pacing Authority",
       defaults.relationshipPacingAuthority
+    ),
+    outcomeRollAuthority: MCPV5ReadString(
+      entry,
+      "Outcome Roll Authority",
+      defaults.outcomeRollAuthority
     ),
     workloadGuard: MCPV5ReadBoolean(
       entry, "Workload Guard", defaults.workloadGuard
@@ -1783,6 +1576,11 @@ function MCPV5HideFromStoryCardExtension(card) {
   if (keys === MCPV5_CARD_KEYS || title === MCPV5_CARD_TITLE) return true;
   if (keys === "%RM%" || title === "⚙️ Living Meters") return true;
   if (keys === "[CONFIG] Banned words") return true;
+  if (
+    typeof card.entry === "string" &&
+    card.entry.includes("Evolution Stages") &&
+    /Character Name\s*:/i.test(card.entry)
+  ) return true;
   if (typeof card.entry === "string" && card.entry.includes("# Put phrases in this story card to remove them.")) return true;
   if (keys.startsWith("__CC_STABLE_CARD__:")) return true;
   if (lowerKeys.startsWith("lc-thoughts:")) return true;
@@ -3327,6 +3125,10 @@ function MCPV5EligibleModules(plan) {
     if (!plan || !plan.effective || plan.effective[id] !== true) continue;
     if (plan.dependencyOnly && plan.dependencyOnly[id]) continue;
     if (id === "auto_cards" && plan.effective.inner_self === true) continue;
+    if (
+      (id === "dice_roll" || id === "coin_flip") &&
+      id !== plan.outcomeRollAuthority
+    ) continue;
     out.push(id);
   }
   return out;
@@ -3335,8 +3137,14 @@ function MCPV5EligibleModules(plan) {
 function MCPV5BuildActionSchedule(plan, settings, inputText) {
   const root = MCPV5Root();
   const eligible = MCPV5EligibleModules(plan);
-  const finalFilters = eligible.filter(id => id === "ar" || id === "usc_e");
-  const ordinary = eligible.filter(id => id !== "ar" && id !== "usc_e");
+  const fixedOutput = eligible.filter(id => (
+    id === "ar" ||
+    id === "usc_e" ||
+    id === "slow_burn" ||
+    id === plan.outcomeRollAuthority
+  ));
+  const fixedOutputSet = new Set(fixedOutput);
+  const ordinary = eligible.filter(id => !fixedOutputSet.has(id));
   const cursor = ordinary.length
     ? root.scheduler.actionCursor % ordinary.length
     : 0;
@@ -3347,9 +3155,15 @@ function MCPV5BuildActionSchedule(plan, settings, inputText) {
   let selected = rotated.slice();
   const skipped = [];
   const projectedTotals = {
-    input: 0,
-    context: 0,
-    output: finalFilters.reduce(
+    input: fixedOutput.reduce(
+      (total, id) => total + MCPV5ExpectedTiming("input", id),
+      0
+    ),
+    context: fixedOutput.reduce(
+      (total, id) => total + MCPV5ExpectedTiming("context", id),
+      0
+    ),
+    output: fixedOutput.reduce(
       (total, id) => total + MCPV5ExpectedTiming("output", id),
       0
     )
@@ -3400,9 +3214,9 @@ function MCPV5BuildActionSchedule(plan, settings, inputText) {
     ) % ordinary.length;
   }
 
-  // Output-only cleanup filters are cheap and must run on every normal visible
-  // Output. Their Output cost was reserved before ordinary module selection.
-  selected = selected.concat(finalFilters);
+  // Lightweight final-stage modules must run on every normal visible Output.
+  // Their hook costs were reserved before ordinary module selection.
+  selected = selected.concat(fixedOutput);
 
   const action = Number.isFinite(info && info.actionCount)
     ? info.actionCount
@@ -45691,7 +45505,7 @@ function MCPV5Create_living_meters() {
  * You may bundle this into your own script. Keeping this notice is all that
  * is asked.
  *
- * Configured from the RM_CONFIG block at the top of this file.
+ * Configured from the RM_CONFIG block below.
  * ==========================================================================*/
 
 // Some globals are not defined in every hook. Establish them before use.
@@ -45703,7 +45517,271 @@ globalThis.storyCards ??= [];
 globalThis.info ??= {};
 
 /* ============================================================================
- * 1. PRESETS — ready-made resource sets RM_CONFIG.preset can start from.
+ * 1. CREATOR CONFIG — edit this block
+ * ==========================================================================*/
+
+const RM_CONFIG = {
+  // Start from a preset, then add or override resources below.
+  // "survival" | "fantasy" | "scifi" | "noir" | "mechanic" | "none" |
+
+  // If preset is "none", no resources are added by default and the preset section is ignored.
+  // You must then define all resources and triggers you want in the "resources" array below.
+  // Starting from line 77 and ending on line 261
+  preset: "none",
+
+  // Resources defined here are MERGED over the preset, matched by `id`.
+  // Give an id that isn't in the preset to add a brand-new resource.
+  //
+  // TRIGGERS take plain word lists — you never write a regular expression.
+  //   "coin"    matches the whole word "coin" only
+  //   "loot*"   matches "loot", "looted", "looting", "looter"
+  //   "dead body"  phrases are fine
+  // Matching is always case-insensitive and always respects word boundaries,
+  // so "rest" will not fire on "restaurant". Add the * yourself when you want
+  // word endings to count.
+  //
+  // ==========================================================================
+  // DEEP SPACE — a long-haul salvage run gone wrong.
+  //
+  // Twelve interlocking systems. The design intent is that no single resource
+  // kills you; the ship does, because fixing one thing costs another. A burn
+  // spends fuel AND adds heat. Running the reactor restores power but bakes
+  // the ship and doses the crew. Repairs eat spare parts you cannot replace
+  // out here. Note how several triggers share the same words across different
+  // resources — that is how one narrative event moves three numbers at once.
+  // ==========================================================================
+  resources: [
+
+    // ---- Ship -------------------------------------------------------------
+    {
+      id: "hull", label: "Hull", icon: "🛡️",
+      min: 0, max: 100, start: 100, perTurn: 0,
+      bands: [
+        { upTo: 0, name: "breached", tell: "The hull has failed. The ship is venting to vacuum and is no longer survivable; narrate the decompression and its consequences." },
+        { upTo: 25, name: "critical", tell: "The hull is holed in several places. Bulkheads groan, atmosphere hisses out through patches, and any hard manoeuvre risks tearing it wide open." },
+        { upTo: 60, name: "damaged", tell: "The hull is buckled and patched. Stress fractures creak whenever the ship accelerates." },
+        { upTo: 100, name: "sound", tell: "" },
+      ],
+      triggers: [
+        { on: "output", words: ["hull breach", "micrometeor*", "collision", "ruptur*", "direct hit", "shrapnel", "debris field"], delta: -18 },
+        { on: "both", words: ["weld*", "patch the hull", "hull patch", "seal the breach", "repair the hull"], delta: 20 },
+      ],
+    },
+    {
+      id: "power", label: "Power", icon: "🔋",
+      min: 0, max: 100, start: 88, perTurn: -0.7,
+      bands: [
+        { upTo: 0, name: "dark", tell: "The ship is dead. No lights, no heat, no life support, no doors. Only emergency chemical lamps and whatever is in the character's hands." },
+        { upTo: 18, name: "brownout", tell: "Power is nearly gone. Lights flicker, non-essential systems are offline, and consoles reboot mid-sentence." },
+        { upTo: 50, name: "rationed", tell: "Power is being rationed. Whole decks are dark and the character has to choose which systems to bring up." },
+        { upTo: 100, name: "nominal", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["reactor", "spin up the core", "power cell", "solar array", "recharg*"], delta: 34 },
+        { on: "both", words: ["reroute power", "divert power", "overclock*", "full burn"], delta: -14 },
+        { on: "output", words: ["short circuit", "power surge", "grid failure", "blown coupling"], delta: -20 },
+      ],
+    },
+    {
+      id: "fuel", label: "Fuel", icon: "⛽",
+      min: 0, max: 100, start: 62, perTurn: 0,
+      bands: [
+        { upTo: 0, name: "dry", tell: "The tanks are dry. The ship cannot manoeuvre and is on a ballistic course it cannot change." },
+        { upTo: 15, name: "reserve", tell: "Fuel is down to the reserve. There is enough for one burn, maybe, and nothing after it." },
+        { upTo: 100, name: "ok", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["burn", "burns", "burned", "thrust*", "manoeuvr*", "maneuver*", "course correction"], delta: -13 },
+        { on: "both", words: ["refuel*", "fuel line", "siphon*", "tanker", "hydrogen scoop"], delta: 30 },
+      ],
+    },
+    {
+      id: "heat", label: "Thermal", icon: "🌡️",
+      // Inverted: HIGH is bad. Radiators bleed it off slowly on their own.
+      // min is 15, not 0 — a crewed ship has an ambient floor it cannot go
+      // below, and `min` does not have to be zero.
+      min: 15, max: 100, start: 28, perTurn: -0.8,
+      bands: [
+        { upTo: 35, name: "cool", tell: "" },
+        { upTo: 70, name: "warm", tell: "The ship is running hot. Deck plating is uncomfortable to touch and the air tastes of scorched dust." },
+        { upTo: 100, name: "overheating", tell: "The ship is overheating badly. Coolant alarms are constant, sweat runs freely, and electronics are failing from thermal stress." },
+      ],
+      triggers: [
+        { on: "both", words: ["reactor", "overclock*", "full burn", "weapons fire"], delta: 13 },
+        { on: "both", words: ["radiator*", "vent heat", "coolant", "shut down the core", "power down"], delta: -22 },
+        { on: "output", words: ["stellar flare", "close approach", "sunward"], delta: 16 },
+      ],
+    },
+
+    // ---- Life support -----------------------------------------------------
+    {
+      id: "o2", label: "Oxygen", icon: "🫁",
+      min: 0, max: 100, start: 100, perTurn: -1.3,
+      bands: [
+        { upTo: 0, name: "anoxic", tell: "There is no breathable air left. The character is suffocating: vision tunnelling, lungs burning, seconds of consciousness remaining." },
+        { upTo: 20, name: "critical", tell: "Oxygen is critically low. Every breath is shallow and insufficient; the character is light-headed and their judgement is visibly slipping." },
+        { upTo: 45, name: "thin", tell: "The air is thin and stale. The character tires quickly and has a persistent headache." },
+        { upTo: 100, name: "breathable", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["scrubber*", "oxygen candle", "o2 tank", "air supply", "recharge the tanks", "algae tank"], delta: 40 },
+        { on: "both", words: ["eva", "spacewalk*", "airlock cycle", "suit up"], delta: -12 },
+        // Not bare "vent*" or "leak*": those fire on "ventilation hums" and on
+        // a coolant leak, neither of which costs anyone their air.
+        { on: "output", words: ["hull breach", "ruptur*", "decompress*", "atmosphere leak", "air leak", "blown seal"], delta: -22 },
+      ],
+    },
+    {
+      id: "food", label: "Rations", icon: "🍱",
+      min: 0, max: 100, start: 74, perTurn: -0.9,
+      bands: [
+        { upTo: 0, name: "starving", tell: "The rations are gone. The character is starving: cramping, weak, slow to think, and increasingly willing to consider things they would not have considered." },
+        { upTo: 22, name: "rationing", tell: "Food is nearly out. The character is on quarter-rations and thinks about it constantly." },
+        { upTo: 100, name: "fed", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["ration pack", "eat", "ate", "eating", "meal", "meals", "protein paste", "galley"], delta: 26 },
+        { on: "both", words: ["hydroponic*", "food crate", "resupply", "supply cache"], delta: 34 },
+      ],
+    },
+    {
+      id: "water", label: "Water", icon: "💧",
+      min: 0, max: 100, start: 80, perTurn: -1.1,
+      bands: [
+        { upTo: 0, name: "dehydrated", tell: "The water is gone. The character is dangerously dehydrated: cracked lips, dark urine, dizziness, failing concentration." },
+        { upTo: 25, name: "short", tell: "Water is short. The character's mouth is permanently dry and they are rationing every sip." },
+        { upTo: 100, name: "ok", tell: "" },
+      ],
+      triggers: [
+        // "recycler" is deliberately NOT here: it would also match inside
+        // "recycler failure" below and cancel the loss out.
+        { on: "both", words: ["drink", "drank", "drinking", "water ration", "condensate", "ice haul", "purifier"], delta: 32 },
+        { on: "output", words: ["recycler failure", "water loss", "coolant leak"], delta: -18 },
+      ],
+    },
+
+    // ---- Crew -------------------------------------------------------------
+    {
+      id: "hp", label: "Condition", icon: "❤️",
+      min: 0, max: 100, start: 100, perTurn: 0,
+      bands: [
+        { upTo: 0, name: "dead", tell: "The character has died. Narrate the death and its consequences; do not let them act again." },
+        { upTo: 22, name: "critical", tell: "The character is critically injured — bleeding, shocky, barely able to stand. Without treatment they will not last long." },
+        { upTo: 58, name: "injured", tell: "The character is injured and impaired. Movement is slow and painful, and fine work is difficult." },
+        { upTo: 100, name: "well", tell: "" },
+      ],
+      triggers: [
+        // "burn*" is deliberately NOT here: an engine burn is a manoeuvre, and
+        // it would injure the crew every time they changed course.
+        { on: "output", words: ["scald*", "struck", "crush*", "shrapnel", "fracture*", "bleeding", "electrocut*", "frostbite", "concussion"], delta: -17 },
+        { on: "both", words: ["medbay", "medkit", "med kit", "stim", "stims", "sutur*", "treat the wound", "autodoc"], delta: 24 },
+      ],
+    },
+    {
+      id: "rads", label: "Radiation", icon: "☢️",
+      // Inverted and CUMULATIVE: it only ever goes up unless treated.
+      min: 0, max: 100, start: 4, perTurn: 0.2,
+      bands: [
+        { upTo: 20, name: "background", tell: "" },
+        { upTo: 45, name: "exposed", tell: "The character has taken a real dose. Nausea comes in waves and their gums bleed when they clench their jaw." },
+        { upTo: 75, name: "sick", tell: "Radiation sickness has set in: vomiting, hair loss, bruising under the skin, exhaustion that sleep does not touch." },
+        { upTo: 100, name: "lethal", tell: "The character has absorbed a lethal dose. They are visibly dying — describe the failure of their body honestly and without hope of recovery." },
+      ],
+      triggers: [
+        { on: "output", words: ["reactor breach", "radiation", "irradiat*", "hot zone", "solar storm", "unshielded"], delta: 14 },
+        { on: "both", words: ["reactor", "core chamber", "eva", "spacewalk*"], delta: 5 },
+        { on: "both", words: ["anti-rad", "antirad", "chelation", "iodine", "decontaminat*"], delta: -22 },
+      ],
+    },
+    {
+      id: "morale", label: "Morale", icon: "🧠",
+      min: 0, max: 100, start: 72, perTurn: -0.45,
+      bands: [
+        { upTo: 0, name: "broken", tell: "The character has broken. Describe dissociation, fixed stares, and decisions that make no sense to anyone but them." },
+        { upTo: 25, name: "fraying", tell: "The character is coming apart. They hear things in the hull noise, talk to people who are not there, and startle badly." },
+        { upTo: 55, name: "strained", tell: "The character is worn thin by isolation. They are irritable, superstitious about the ship's sounds, and sleeping badly." },
+        { upTo: 100, name: "steady", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["music", "message from home", "recorded message", "sleep", "slept", "shore leave", "hot meal", "coffee"], delta: 16 },
+        { on: "output", words: ["alone", "silence", "no response", "corpse", "body bag", "distress call", "nothing on the scope"], delta: -9 },
+      ],
+    },
+
+    // ---- Cargo and economy -------------------------------------------------
+    {
+      id: "parts", label: "Spare Parts", icon: "🔩",
+      min: 0, max: 60, start: 22, perTurn: 0,
+      bands: [
+        { upTo: 0, name: "none", tell: "There are no spare parts left. Nothing further can be repaired; anything that breaks from here stays broken." },
+        { upTo: 6, name: "scarce", tell: "Spare parts are almost gone. The character is cannibalising non-essential systems to keep essential ones alive." },
+        { upTo: 60, name: "stocked", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["weld*", "patch the hull", "seal the breach", "repair the hull", "jury-rig*", "jury rig*", "cannibalis*", "cannibaliz*"], delta: -6 },
+        { on: "both", words: ["salvag*", "strip the wreck", "scav*", "parts cache", "component crate"], delta: 14 },
+      ],
+    },
+    {
+      id: "credits", label: "Credits", icon: "🪙",
+      min: 0, max: 99999, start: 340, perTurn: 0,
+      bands: [
+        { upTo: 0, name: "broke", tell: "The character has no credits. No station will sell them fuel, air, or docking time." },
+        { upTo: 99999, name: "solvent", tell: "" },
+      ],
+      triggers: [
+        { on: "output", words: ["paid", "bought", "purchase*", "docking fee", "bribe*", "toll"], delta: -60 },
+        { on: "output", words: ["sold", "salvage claim", "bounty", "contract payment", "reward*"], delta: 120 },
+      ],
+    },
+  ],
+
+  // How the AI is told about the resources.
+  //   "context"     — appended to the model context. Accurate and current.
+  //                   SILENTLY DOES NOTHING on models with Optimized Context.
+  //   "frontMemory" — written to state.memory.frontMemory. Survives Optimized
+  //                   Context, but lags one turn behind.
+  //   "none"        — track only, never tell the AI.
+  inject: "context",
+
+  // Take this module's own command answers back out of the context window.
+  // They are delivered as story output, so they land in the history and would
+  // otherwise be read back to the model on every turn that follows.
+  hideAnswersFromAI: true,
+
+  // Prefix for the injected block. Keep it bracketed and in complete sentences:
+  // an unterminated fragment invites the AI to finish it.
+  injectLabel: "Ship and crew status",
+
+  // Show a toast to the player when a resource crosses into a new band.
+  announceBandChanges: true,
+
+  // Maintain a "Living Meters" story card the player can read and edit.
+  playerCard: true,
+  playerCardTitle: "⚙️ Living Meters",
+
+  // Command prefix. Players type "/status", "/hp +10", etc.
+  commandPrefix: "/",
+
+  // Ignore a trigger word sitting inside a negated clause, so "you do not
+  // eat" no longer feeds the character. A negator only reaches back to the
+  // last sentence break. Set false for the old behaviour.
+  negationGuard: true,
+
+  // Scan player input as well as AI output for trigger matches.
+  scanInput: true,
+  scanOutput: true,
+
+  // Multiplies every negative drift. The player can override this in the card.
+  // easy 0.5 | normal 1 | hard 1.75
+  difficulty: "normal",
+
+  // Print diagnostics to the Console Log panel.
+  debug: false,
+};
+
+/* ============================================================================
+ * 2. PRESETS — ready-made resource sets RM_CONFIG.preset can start from.
  * ==========================================================================*/
 
 const RM_PRESETS = {
@@ -49939,9 +50017,392 @@ function MCPV5Create_usc_e() {
   return { run };
 }
 
+function MCPV5Create_slow_burn() {
+/**
+ * SLOWBURN Evolution Engine
+ * Centralized logic for NPC personality tracking and Author's Note management.
+ */
+function SLOWBURN(type, textString = "") {
+  // 1. INITIALIZE STATE & DEFAULT SETTINGS
+  if (!state.npc) state.npc = { name: "Companion", level: 0 };
+  let gainRate = 0.2;
+  let drainRate = 0.5;
+  let currentInfo = "Normal behavior.";
+  let bestMatchThreshold = -1;
+
+  // 2. MULTI-CARD DATABASE SCAN
+  storyCards.forEach(card => {
+    if (card.entry.includes("Evolution Stages")) {
+      // Discover Metadata (Name and Rates)
+      const nMatch = card.entry.match(/Character Name:\s*(.*)/i);
+      const gMatch = card.entry.match(/Gain Rate:\s*([\d.]+)/i);
+      const dMatch = card.entry.match(/Drain Rate:\s*([\d.]+)/i);
+      
+      if (nMatch) state.npc.name = nMatch[1].trim();
+      if (gMatch) gainRate = parseFloat(gMatch[1]);
+      if (dMatch) drainRate = parseFloat(dMatch[1]);
+
+      // Discover Current Evolution Stage
+      const lines = card.entry.split('\n');
+      lines.forEach(line => {
+        const match = line.match(/^(\d+):\s*(.*)/);
+        if (match) {
+          const threshold = parseInt(match[1]);
+          if (state.npc.level >= threshold && threshold > bestMatchThreshold) {
+            bestMatchThreshold = threshold;
+            currentInfo = match[2].trim();
+          }
+        }
+      });
+    }
+  });
+
+  // 3. SCORING LOGIC (Only runs during Output)
+  // Scoring only triggers if 'textString' is provided (the AI's response)
+  if (type === "output" && textString) {
+    const aiText = textString.toLowerCase();
+    
+    // Interaction Filter: Only score if the NPC is talking to the player
+    if (aiText.includes("you") || aiText.includes("your")) {
+      const pos = ["nod", "agree", "thank", "polite", "helpful", "share", "listen", "patience", "respect", "kindly", "calm", "pleasant", "thoughtful", "admire", "honest", "cooperate", "assist", "welcome", "comfort", "reassure", "friendly", "softly", "laugh", "chuckled", "curious", "interest", "civility", "courteous", "stable", "blush", "smile", "yield", "soften", "lean", "whisper", "tremble", "warm", "accept", "nuzzle", "giggle", "sigh", "purr", "moan", "relax", "melt", "cuddle", "hug", "kiss", "blossom", "trust", "eager", "comply", "obey", "shiver", "stroke", "caress", "devotion", "flutter", "glow", "radiate"];
+      const neg = ["recoil", "cold", "stern", "angry", "refuse", "snap", "distant", "harsh", "glare", "tense", "shove", "push", "slap", "hiss", "growl", "sneer", "scowl", "scoff", "resist", "struggle", "flinch", "avoid", "ignore", "disdain", "disgust", "revolt", "cringe", "stiffen", "withdraw", "shout", "yell", "threaten", "spite", "bitter", "rude", "insult"];
+
+      let change = 0;
+      // Unique Word Check: .includes() only checks if the word exists once in the string,
+      // preventing "sigh sigh sigh" from being counted multiple times.
+      pos.forEach(word => { if (aiText.includes(word)) change += gainRate; });
+      neg.forEach(word => { if (aiText.includes(word)) change -= drainRate; });
+      
+      state.npc.level = Math.max(0, Math.min(100, state.npc.level + change));
+    }
+  }
+
+  // 4. SMART AUTHOR'S NOTE INJECTION (End of Note)
+  const evoString = `[${state.npc.name}'s State: ${currentInfo} (${state.npc.level.toFixed(1)}/100)]`;
+  let note = state.memory.authorsNote || "";
+  const evoRegex = /\[.*?'s State:.*?\]|\[EVO:.*?\]/g;
+
+  if (evoRegex.test(note)) {
+    note = note.replace(evoRegex, "").trim();
+  }
+  state.memory.authorsNote = (note + " " + evoString).trim();
+}
+
+  function escapeSlowBurnRegExp(value) {
+    return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function slowBurnStore() {
+    if (
+      !state.mcpSlowBurn ||
+      typeof state.mcpSlowBurn !== "object" ||
+      Array.isArray(state.mcpSlowBurn)
+    ) {
+      let migrated = null;
+      if (
+        state.npc &&
+        typeof state.npc === "object" &&
+        !Array.isArray(state.npc) &&
+        typeof state.npc.name === "string" &&
+        Number.isFinite(Number(state.npc.level)) &&
+        Object.keys(state.npc).every(key => key === "name" || key === "level")
+      ) {
+        migrated = {
+          name: String(state.npc.name || "Companion"),
+          level: Math.max(0, Math.min(100, Number(state.npc.level) || 0))
+        };
+      }
+      state.mcpSlowBurn = {
+        version: 1,
+        npc: migrated || { name: "Companion", level: 0 },
+        marker: ""
+      };
+    }
+    if (
+      !state.mcpSlowBurn.npc ||
+      typeof state.mcpSlowBurn.npc !== "object" ||
+      Array.isArray(state.mcpSlowBurn.npc)
+    ) {
+      state.mcpSlowBurn.npc = { name: "Companion", level: 0 };
+    }
+    return state.mcpSlowBurn;
+  }
+
+  function run(tab) {
+    const currentText = MCPV5SafeText(globalThis.text, "\u200B");
+    if (tab !== "input" && tab !== "output") return { text: currentText };
+
+    const store = slowBurnStore();
+    const hadNpc = Object.prototype.hasOwnProperty.call(state, "npc");
+    const priorNpc = state.npc;
+    if (!state.memory || typeof state.memory !== "object" || Array.isArray(state.memory)) {
+      state.memory = {};
+    }
+    const priorNote = typeof state.memory.authorsNote === "string"
+      ? state.memory.authorsNote
+      : "";
+    const priorMarker = typeof store.marker === "string" ? store.marker : "";
+
+    try {
+      state.npc = {
+        name: typeof store.npc.name === "string" && store.npc.name.trim()
+          ? store.npc.name
+          : "Companion",
+        level: Math.max(0, Math.min(100, Number(store.npc.level) || 0))
+      };
+
+      if (tab === "input") SLOWBURN("input");
+      else SLOWBURN("output", currentText);
+
+      store.npc = {
+        name: typeof state.npc.name === "string" && state.npc.name.trim()
+          ? state.npc.name
+          : "Companion",
+        level: Math.max(0, Math.min(100, Number(state.npc.level) || 0))
+      };
+
+      const producedNote = typeof state.memory.authorsNote === "string"
+        ? state.memory.authorsNote
+        : "";
+      const markers = producedNote.match(/\[[^\]\r\n]*?'s State:[^\]\r\n]*\]/g) || [];
+      const newMarker = markers.length ? markers[markers.length - 1] : "";
+
+      let cleanNote = priorNote;
+      if (priorMarker) {
+        cleanNote = cleanNote.replace(
+          new RegExp(escapeSlowBurnRegExp(priorMarker), "g"),
+          ""
+        );
+      } else if (newMarker && store.npc.name) {
+        cleanNote = cleanNote.replace(
+          new RegExp(
+            "\\[" + escapeSlowBurnRegExp(store.npc.name) +
+            "'s State:[^\\]\\r\\n]*\\]",
+            "g"
+          ),
+          ""
+        );
+      }
+      cleanNote = cleanNote
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+
+      const role = MCPV5CapabilityRole(
+        "slow_burn",
+        "relationshipPacing",
+        MCPV5_ACTIVE_PLAN
+      );
+      const publish = role !== "observer";
+      state.memory.authorsNote = (
+        publish && newMarker
+          ? [cleanNote, newMarker].filter(Boolean).join("\n\n")
+          : cleanNote
+      ).trim();
+      store.marker = publish ? newMarker : "";
+
+      return { text: currentText };
+    } finally {
+      if (hadNpc) state.npc = priorNpc;
+      else {
+        try { delete state.npc; } catch {}
+      }
+    }
+  }
+
+  return { run };
+}
+
+function MCPV5Create_dice_roll() {
+// Modified Dice Roll Script
+// Modification made by grenith
+// Forked from Dice Roll created by PoisonTea
+
+const modifier = (text) => {
+let modifiedText = text;
+// --- Dice Roll Script - by 💀🍵 PoisonTea ---
+let tryMatch;
+if (
+(tryMatch = modifiedText.match(/(You (assuredly|confidently|doubtlessly|skillfully) (try|attempt|cast|attack|shoot|throw|brace yourself)[^.?!]*[.?!])/))
+) {
+const diceResults = [
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Critical Success!]",
+"[🎲 Dice Roll: Critical Success!]"
+];
+const outcome = diceResults[Math.floor(Math.random() * diceResults.length)];
+modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+} else if (
+(tryMatch = modifiedText.match(/(You (clumsily|tentatively|doubtfully|hesitantly|haphazardly) (try|attempt|cast|attack|shoot|throw|brace yourself)[^.?!]*[.?!])/))
+) {
+const diceResults = [
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Critical Failure!]",
+"[🎲 Dice Roll: Critical Failure!]"
+];
+const outcome = diceResults[Math.floor(Math.random() * diceResults.length)];
+modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+} else if (
+(tryMatch = modifiedText.match(/(You (try|tried|attempt|attempted|attempts|cast|casted|attack|attacked|shoot|shot|shoots|fired|fires|threw|throw|braced|braces|brace yourself)[^.?!]*[.?!])/))
+) {
+const diceResults = [
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Critical Success!]",
+"[🎲 Dice Roll: Critical Failure!]"
+];
+const outcome = diceResults[Math.floor(Math.random() * diceResults.length)];
+modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+} else if (
+(tryMatch = modifiedText.match(/(He (try|tries|tried|attempt|attempted|attempts|cast|casts|casted|attack|attacks|attacked|shoot|shot|shoots|fired|fires|threw|throws|braced|braces|braced himself)[^.?!]*[.?!])/))
+) {
+const diceResults = [
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Critical Success!]",
+"[🎲 Dice Roll: Critical Failure!]"
+];
+const outcome = diceResults[Math.floor(Math.random() * diceResults.length)];
+modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+} else if (
+(tryMatch = modifiedText.match(/(She (try|tries|tried|attempt|attempted|attempts|cast|casts|casted|attack|attacks|attacked|shoot|shot|shoots|fired|fires|threw|throws|braced|braces|braced himself)[^.?!]*[.?!])/))
+) {
+const diceResults = [
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Critical Success!]",
+"[🎲 Dice Roll: Critical Failure!]"
+];
+const outcome = diceResults[Math.floor(Math.random() * diceResults.length)];
+modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+} else if (
+(tryMatch = modifiedText.match(/(They (try|tries|tried|attempt|attempted|attempts|cast|casts|casted|attack|attacks|attacked|shoot|shot|fired|fires|threw|throws|braced|braces|braced themself)[^.?!]*[.?!])/))
+) {
+const diceResults = [
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Critical Success!]",
+"[🎲 Dice Roll: Critical Failure!]"
+];
+const outcome = diceResults[Math.floor(Math.random() * diceResults.length)];
+modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+}
+text = modifiedText; // ✅ Ensure final text includes all changes
+return { text }
+}
+// Don't modify this part
+
+  function run(tab) {
+    const currentText = MCPV5SafeText(globalThis.text, "\u200B");
+    if (tab !== "output") return { text: currentText };
+    const result = modifier(currentText);
+    return (
+      result &&
+      typeof result === "object" &&
+      typeof result.text === "string" &&
+      result.text.length
+    ) ? { text: result.text } : { text: currentText };
+  }
+
+  return { run };
+}
+
+function MCPV5Create_coin_flip() {
+ const modifier = (text) => {
+   let modifiedText = text;
+
+  // --- Chaos Coin Flip Script - by helpfulDuckie, based on Dice Roll by 💀🍵 PoisonTea ---
+  let tryMatch;
+
+  if (
+    (tryMatch = modifiedText.match(/(You (assuredly|confidently|doubtlessly|skillfully) (try|attempt|cast|attack|shoot|throw|brace yourself)[^.?!]*[.?!])/))
+  ) {
+    const CoinResults = [
+      "[🪙 Coin Flip: Critical Success!]",
+      "[🪙 Coin Flip: Critical Success!]",
+      "[🪙 Coin Flip: Critical Success!]",
+      "[🪙 Coin Flip: Critical Success!]",
+      "[🪙 Coin Flip: Critical Failure!]",
+      "[🪙 Coin Flip: Critical Failure!]"
+    ];
+    const outcome = CoinResults[Math.floor(Math.random() * CoinResults.length)];
+    modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+  } else if (
+    (tryMatch = modifiedText.match(/(You (clumsily|tentatively|doubtfully|hesitantly|haphazardly) (try|attempt|cast|attack|shoot|throw|brace yourself)[^.?!]*[.?!])/))
+  ) {
+    const CoinResults = [
+      "[🪙 Coin Flip: Critical Success!]",
+      "[🪙 Coin Flip: Critical Success!]",
+      "[🪙 Coin Flip: Critical Failure!]",
+      "[🪙 Coin Flip: Critical Failure!]",
+      "[🪙 Coin Flip: Critical Failure!]",
+      "[🪙 Coin Flip: Critical Failure!]"
+    ];
+    const outcome = CoinResults[Math.floor(Math.random() * CoinResults.length)];
+    modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+  } else if (
+    (tryMatch = modifiedText.match(/(You (try|attempt|cast|attack|shoot|throw|brace yourself)[^.?!]*[.?!])/))
+  ) {
+    const CoinResults = [
+      "[🪙 Coin Flip: Critical Success!]",
+      "[🪙 Coin Flip: Critical Failure!]"
+    ];
+    const outcome = CoinResults[Math.floor(Math.random() * CoinResults.length)];
+    modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+  }
+  text = modifiedText; // ✅ Ensure final text includes all changes
+  return { text }
+}
+
+// Don't modify this part
+
+  function run(tab) {
+    const currentText = MCPV5SafeText(globalThis.text, "\u200B");
+    if (tab !== "output") return { text: currentText };
+    const result = modifier(currentText);
+    return (
+      result &&
+      typeof result === "object" &&
+      typeof result.text === "string" &&
+      result.text.length
+    ) ? { text: result.text } : { text: currentText };
+  }
+
+  return { run };
+}
+
 const MCPV5_FACTORIES = {
   inner_package: MCPV5Create_inner_package,
   living_characters: MCPV5Create_living_characters,
+  slow_burn: MCPV5Create_slow_burn,
   living_meters: MCPV5Create_living_meters,
   story_card_extension: MCPV5Create_story_card_extension,
   true_auto_stats: MCPV5Create_true_auto_stats,
@@ -49951,7 +50412,9 @@ const MCPV5_FACTORIES = {
   realmheart: MCPV5Create_realmheart,
   character_continuity: MCPV5Create_character_continuity,
   ar: MCPV5Create_ar,
-  usc_e: MCPV5Create_usc_e
+  usc_e: MCPV5Create_usc_e,
+  dice_roll: MCPV5Create_dice_roll,
+  coin_flip: MCPV5Create_coin_flip
 };
 
 function MCPV5FactoryKey(id) {
@@ -50083,7 +50546,7 @@ function MCPV5StripRealmHeartContextLeak(value, plan) {
     );
     return cleaned;
   } catch (error) {
-    log("MCP V5.3.7 RealmHeart leak guard error:", error);
+    log("MCP V5.3.8 RealmHeart leak guard error:", error);
     return original;
   }
 }
@@ -50211,7 +50674,7 @@ function MCPV5RunProfile(id, tab, incomingText, plan) {
       MCPV5Name(id) + " / " + tab + " / " +
       String(error && error.message ? error.message : error)
     );
-    log("MCP V5.3.7 module error:", MCPV5Name(id), tab, error);
+    log("MCP V5.3.8 module error:", MCPV5Name(id), tab, error);
     return { text: original, __mcpOk: false };
   } finally {
     MCPV5RestoreModuleGlobals(globalSnapshot);
@@ -50512,9 +50975,17 @@ function MCPV5Run(tab, incomingText) {
       const protocol = order.filter(id => protocolSet.has(id));
       const finalFilterOrder = ["ar", "usc_e"].filter(id => order.includes(id));
       const finalFilterSet = new Set(finalFilterOrder);
+      const slowBurnSelected = order.includes("slow_burn");
+      const outcomeRollId = (
+        plan.outcomeRollAuthority &&
+        order.includes(plan.outcomeRollAuthority)
+      ) ? plan.outcomeRollAuthority : "";
       const observers = order.filter(id => (
         !protocolSet.has(id) &&
-        !finalFilterSet.has(id)
+        !finalFilterSet.has(id) &&
+        id !== "slow_burn" &&
+        id !== "dice_roll" &&
+        id !== "coin_flip"
       ));
 
       // Protocol consumers are intentionally chained: each removes only its
@@ -50603,6 +51074,46 @@ function MCPV5Run(tab, incomingText) {
           }
         }
       }
+
+      // Slow Burn scores only the cleaned visible narrative. Its host wrapper
+      // keeps state.npc private and publishes only its owned Author's Note marker.
+      if (!stopped && slowBurnSelected) {
+        const before = current;
+        const result = execute("slow_burn", current);
+        if (
+          result &&
+          result.__mcpOk === true &&
+          typeof result.text === "string"
+        ) {
+          current = MCPV5ApplyOutputGuard(
+            "slow_burn",
+            result.text,
+            before,
+            original
+          );
+          if (result.stop === true) stopped = true;
+        }
+      }
+
+      // Dice Roll and Coin Flip compete for one Outcome Roll capability. Only
+      // the elected authority may decorate a normal visible story response.
+      if (!stopped && outcomeRollId) {
+        const before = current;
+        const result = execute(outcomeRollId, current);
+        if (
+          result &&
+          result.__mcpOk === true &&
+          typeof result.text === "string"
+        ) {
+          current = MCPV5ApplyOutputGuard(
+            outcomeRollId,
+            result.text,
+            before,
+            original
+          );
+          if (result.stop === true) stopped = true;
+        }
+      }
     }
   }
 
@@ -50666,5 +51177,5 @@ function MCPV5Run(tab, incomingText) {
 try {
   MCPV5SyncControls();
 } catch (error) {
-  log("MCP V5.3.7 initialization error:", error);
+  log("MCP V5.3.8 initialization error:", error);
 }
