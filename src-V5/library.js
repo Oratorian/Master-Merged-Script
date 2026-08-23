@@ -46307,7 +46307,14 @@ const RM = (function () {
       res: res,
       band: {},        // id -> last announced band name
       turn: 0,         // our own turn counter, not info.actionCount
-      hlen: 0,         // history.length at the last counted turn
+      // How much of history has been read for turn counting. It starts at the
+      // current length, never at zero: an adventure can already have a long
+      // history behind it when this script is first enabled, and that past is
+      // not drift this run owes.
+      hlen: Array.isArray(history) ? history.length : 0,
+      hac: Number.isInteger(info?.actionCount) ? Math.abs(info.actionCount) : 0,
+      owed: 0,         // generations charged before their AI action landed
+      inflight: false, // this generation has already been charged for
       outHash: 0,      // hash of the last output we scanned
       cardOK: true,    // false once we detect story cards are unavailable
       warned: false,
@@ -46338,6 +46345,9 @@ const RM = (function () {
     if (raw.band && typeof raw.band === "object") s.band = raw.band;
     if (isNum(raw.turn)) s.turn = raw.turn;
     if (isNum(raw.hlen)) s.hlen = raw.hlen;
+    if (isNum(raw.hac)) s.hac = raw.hac;
+    if (isNum(raw.owed)) s.owed = clamp(raw.owed, 0, 1);
+    if (typeof raw.inflight === "boolean") s.inflight = raw.inflight;
     if (isNum(raw.outHash)) s.outHash = raw.outHash;
     if (typeof raw.cardOK === "boolean") s.cardOK = raw.cardOK;
     if (typeof raw.warned === "boolean") s.warned = raw.warned;
@@ -46488,36 +46498,119 @@ const RM = (function () {
   // ---- turn detection -----------------------------------------------------
 
   // There is no "the turn advanced" API, and info.actionCount is not a clean
-  // counter: it increments twice on a Do/Say/Story turn, once on a Continue,
-  // and has been observed to decrement on a Retry and to go negative.
-  // history.length is the more honest signal until the platform truncates it,
-  // so use it first and fall back to actionCount once it plateaus.
-  function turnAdvanced(s) {
+  // counter: it moves twice on a Do/Say/Story turn, once on a Continue, and a
+  // Retry can move it backwards, or negative.
+  //
+  // What history does say honestly is how MANY generations have passed, not
+  // merely that one has: each generation appends exactly one AI action to it,
+  // whatever the player did to provoke that generation. Counting those in the
+  // stretch not yet read means a hook that is skipped for a generation, or for
+  // ten, costs no drift, and it cannot double count, because the stretch is
+  // consumed as it is read.
+  //
+  // This module may NOT assume any particular hook runs every generation. This
+  // host hands the whole Context tab, and the whole Output tab, to a single
+  // module whenever a transaction is active, and Story Arc generation, an
+  // Auto-Cards model task and Inner Self thought formation are all ordinary
+  // play. A Continue never runs Input either. Counting from history is what
+  // makes the drift survive all of that.
+  //
+  // history excludes the in-flight action, so counting it alone would pay for
+  // a generation only once the NEXT one starts. The generation being lived
+  // through is therefore charged on credit, and settled when its AI action
+  // finally shows up, so drift lands on the turn that earned it.
+  const AI_ACTION = "continue";
+
+  // A pathological jump (an adventure imported with a long history behind it,
+  // every hook silent for a very long time) must not dump an hour of drift
+  // into a single turn.
+  const TICK_MAX = 20;
+
+  function turnsPassed(s, hook) {
     const hl = Array.isArray(history) ? history.length : 0;
     const ac = Number.isInteger(info?.actionCount) ? Math.abs(info.actionCount) : 0;
 
-    if (Math.abs(hl - ac) < 2) {
-      // history is intact — trust it. A retry re-generates without growing it.
-      if (hl > s.hlen) { s.hlen = hl; return true; }
+    // Undone actions, or the front trimmed harder than the back grew: take the
+    // new length as the anchor and count nothing this time.
+    if (hl < s.hlen) { s.hlen = hl; s.hac = ac; return 0; }
+
+    if (hl > s.hlen) {
+      // Input runs because a player action is about to be appended, so being
+      // there is itself proof a generation has begun. Elsewhere the proof is a
+      // player action already sitting in the stretch being read.
+      let started = hook === "input";
+      let done = 0;
+      for (let i = s.hlen; i < hl; i++) {
+        const a = history[i];
+        if (!a) continue;
+        if (a.type === AI_ACTION) done++;
+        else started = true;
+      }
       s.hlen = hl;
-      return false;
+      s.hac = ac;           // keep the fallback's baseline current
+
+      // Generations already charged on credit are settled here, not charged a
+      // second time.
+      const settled = Math.min(done, s.owed);
+      s.owed -= settled;
+      if (settled > 0) s.inflight = false;
+      let n = done - settled;
+
+      // Nothing has been charged for the generation being lived through, so
+      // charge it now and remember the debt. Without the `started` proof this
+      // would also charge for hooks that run outside any generation, and the
+      // real next turn would then find its drift already spent.
+      if (started && !s.inflight) {
+        s.inflight = true;
+        s.owed += 1;
+        // A command's own generation exists only to carry the answer back, and
+        // asking a question should not cost the character a turn of hunger. It
+        // is still claimed and still owed, so no later hook charges for it and
+        // the settle stays balanced. It simply costs nothing.
+        if (s.cmdTurn) s.cmdTurn = false;
+        else n += 1;
+      }
+      return n;
     }
-    // history has been truncated; fall back to the action counter.
-    if (ac > s.turn) return true;
-    return false;
+
+    // history has stopped growing, so it is being truncated and its tail no
+    // longer says anything new. actionCount is what is left. Context and
+    // Output see the settled value; Input sees the intermediate one and would
+    // have Context count the same turn again, so Input stops here. Credit
+    // cannot be settled against a history that is not growing, so the ledger
+    // is closed while we are down here.
+    if (hook === "input") return 0;
+    if (ac > s.hac) { s.hac = ac; s.owed = 0; s.inflight = false; return 1; }
+    return 0;
   }
 
   // ---- per-turn drift -----------------------------------------------------
 
-  function tick(s) {
+  function tick(s, times) {
+    const want = Math.floor(times) || 1;
+    const n = Math.max(1, Math.min(TICK_MAX, want));
+    if (want > TICK_MAX) dbg("drift catch-up capped at", TICK_MAX, "of", want);
     const changes = [];
     for (const e of activeDefs(s)) {
       if (!e.perTurn) continue;
-      const r = addVal(s, e.id, e.perTurn);
+      // One clamped move of n turns rather than n moves: the same result
+      // against the bounds, and it stays cheap when there is ground to make up.
+      const r = addVal(s, e.id, e.perTurn * n);
       if (r && r.before !== r.after) changes.push(r);
     }
-    s.turn += 1;
+    s.turn += n;
     return changes;
+  }
+
+  // Apply whatever drift is owed, from wherever we happen to be standing. Any
+  // hook may call this: whichever one runs first for a generation does the
+  // work, and the others find nothing owed and return.
+  function catchUp(s, hook) {
+    const n = turnsPassed(s, hook);
+    if (n <= 0) return 0;
+    tick(s, n);
+    announce(s);
+    return n;
   }
 
   // ---- triggers -----------------------------------------------------------
@@ -46771,6 +46864,17 @@ const RM = (function () {
     ].join("\n");
   }
 
+  // Whether this input is a command, decided without running it. The drift has
+  // to know before the answer is produced: it is settled at the top of Input,
+  // and a command's own generation must not be charged for. Kept in step with
+  // handleCommand's two early returns below.
+  function looksLikeCommand(raw) {
+    const p = RM_CONFIG.commandPrefix;
+    const t = stripPrefix(raw);
+    if (!t.startsWith(p)) return false;
+    return t.slice(p.length).trim().length > 0;
+  }
+
   // Returns a message string if the input was a command, else null.
   function handleCommand(s, raw) {
     const p = RM_CONFIG.commandPrefix;
@@ -46948,9 +47052,15 @@ const RM = (function () {
 
     try {
       s.fired = {};              // a new player action begins a new turn
-      s.cmdTurn = false;
+      s.cmdTurn = looksLikeCommand(out);
       reportProblems(s);
       syncCard(s);
+
+      // Input is the earliest hook of a generation and, unlike Context and
+      // Output, this host never hands it to somebody else, so settle the drift
+      // owed here. It must not fall back to actionCount: Input sees the
+      // intermediate value and Context would count the same turn again.
+      catchUp(s, "input");
 
       const reply = handleCommand(s, out);
       if (reply !== null) {
@@ -46995,31 +47105,24 @@ const RM = (function () {
     try {
       reportProblems(s);
 
-      // Context runs once per generation, so it is where a waiting answer
-      // ages. One generation is its own; beyond that the Output hook was
-      // skipped and the answer is late. Give up after a few, rather than let
-      // a forgotten answer surface in the middle of an unrelated scene.
+      // Where a waiting answer ages. One generation is its own; beyond that
+      // the Output hook was skipped and the answer is late. Give up after a
+      // few, rather than let a forgotten answer surface in the middle of an
+      // unrelated scene. If this hook is taken over the answer simply ages
+      // more slowly, which errs towards delivering it rather than losing it.
       if (s.reply) {
         s.replyGen += 1;
         if (s.replyGen > REPLY_MAX_GEN) { s.reply = ""; s.replyGen = 0; }
       }
 
-      // The Context hook is the only one that runs on every generation,
-      // including Continue actions, so the turn tick belongs here.
-      //
-      // turnAdvanced keeps its own bookkeeping, so it runs even on a command
-      // turn. What a command turn skips is the tick: that generation exists
-      // only to carry the answer back, and asking a question should not cost
-      // the character a turn of hunger. The gate is the command turn itself,
-      // never "an answer is waiting" - an answer can wait for several
-      // generations, and those are ordinary turns that must drift as usual.
-      const advanced = turnAdvanced(s);
-      const cmdTurn = s.cmdTurn;
-      s.cmdTurn = false;
-      if (advanced && !cmdTurn) {
-        tick(s);
-        announce(s);
-      }
+      // Context is where a Continue is first seen, since a Continue never runs
+      // Input. It is not guaranteed to run either, so it settles what is owed
+      // rather than assuming exactly one turn has passed since it last looked.
+      // A command turn costs no drift; turnsPassed handles that, so that the
+      // gate is the command turn itself and never "an answer is waiting" - an
+      // answer can wait several generations, and those are ordinary turns that
+      // must drift as usual.
+      catchUp(s, "context");
 
       syncCard(s);
 
@@ -47053,6 +47156,11 @@ const RM = (function () {
     let out = typeof inText === "string" ? inText : " ";
 
     try {
+      // Last chance for a generation whose Input and Context both went
+      // elsewhere. Ahead of the early return below, so that delivering an
+      // answer never costs the drift this generation owes.
+      catchUp(s, "output");
+
       // A pending command answer leaves on this generation.
       let pending = "";
       let late = false;
