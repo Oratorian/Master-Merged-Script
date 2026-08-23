@@ -1,22 +1,22 @@
 /* ============================================================
-   MASTER SCRIPT V5.3.7 — COMPACT EDITION (EXP.)
-   Hi Hi! Enjoy the SCRIPT!
+   MASTER SCRIPT V5.3.8
+   --- Please enjoy ---
    --- Thank you for all your hard work and feedback ---
    ============================================================ */
 
 const MCPV5_VERSION = 5;
 const MCPV5_SCHEMA_VERSION = 3;
-const MCPV5_BUILD_VERSION = "5.3.7";
-const MCPV5_PATCH = "5.3.7-realmheart-context-anchor-cc-v2.01";
+const MCPV5_BUILD_VERSION = "5.3.8";
+const MCPV5_PATCH = "5.3.8-lm1.2-slowburn-outcome-rolls";
 const MCPV5_CARD_KEYS = "__MCP_EXACT_SCRIPT_COLLECTION__";
 const MCPV5_CARD_TITLE = "⚙️ Master Script Control Panel";
 const MCPV5_CARD_TYPE = "_MCP_V5_";
 const MCPV5_CONTROL_ENTRY_LIMIT = 2000;
-const MCPV5_PROFILE_NAMES = {"inner_self":"Inner Self","auto_cards":"Auto-Cards","living_characters":"Living Characters","living_meters":"Living Meters","story_card_extension":"Story Card Extension","true_auto_stats":"True Automatic Stats","story_arc_engine":"Story Arc Engine","narrative_governor":"Narrative Governor","stackable_inventory":"Stackable Inventory","realmheart":"RealmHeart","character_continuity":"Character Continuity","ar":"AR","usc_e":"USC-E"};
-const MCPV5_PROFILE_ORDER = ["inner_self","auto_cards","living_characters","living_meters","story_card_extension","true_auto_stats","story_arc_engine","narrative_governor","stackable_inventory","realmheart","character_continuity","ar","usc_e"];
+const MCPV5_PROFILE_NAMES = {"inner_self":"Inner Self","auto_cards":"Auto-Cards","living_characters":"Living Characters","slow_burn":"Slow Burn","living_meters":"Living Meters","story_card_extension":"Story Card Extension","true_auto_stats":"True Automatic Stats","story_arc_engine":"Story Arc Engine","narrative_governor":"Narrative Governor","stackable_inventory":"Stackable Inventory","realmheart":"RealmHeart","character_continuity":"Character Continuity","ar":"AR","usc_e":"USC-E","dice_roll":"Dice Roll","coin_flip":"Coin Flip"};
+const MCPV5_PROFILE_ORDER = ["inner_self","auto_cards","living_characters","slow_burn","living_meters","story_card_extension","true_auto_stats","story_arc_engine","narrative_governor","stackable_inventory","realmheart","character_continuity","ar","usc_e","dice_roll","coin_flip"];
 
 const MCPV5_INPUT_ORDER = [
-  "living_meters", "inner_self", "auto_cards", "living_characters",
+  "living_meters", "slow_burn", "inner_self", "auto_cards", "living_characters",
   "true_auto_stats", "story_arc_engine", "narrative_governor",
   "stackable_inventory", "realmheart", "character_continuity"
 ];
@@ -32,7 +32,8 @@ const MCPV5_OUTPUT_ORDER = [
   "inner_self", "auto_cards", "living_characters",
   "living_meters", "true_auto_stats", "story_arc_engine",
   "narrative_governor", "stackable_inventory", "realmheart",
-  "character_continuity", "ar", "usc_e"
+  "character_continuity", "ar", "usc_e", "slow_burn",
+  "dice_roll", "coin_flip"
 ];
 
 const MCPV5_INVENTORY_CARD_MODULES = [
@@ -58,6 +59,7 @@ const MCPV5_MODULE_STATE_KEYS = {
   inner_self: ["AutoCards", "InnerSelf", "LSIv2", "entry", "mind", "promptDragon", "showAPI", "willStop"],
   auto_cards: ["AutoCards", "InnerSelf", "LSIv2", "entry", "mind", "promptDragon", "showAPI", "willStop"],
   living_characters: ["chaosGoblinV2", "livingThoughts"],
+  slow_burn: ["mcpSlowBurn"],
   living_meters: ["RM"],
   story_card_extension: ["mcpStoryCardExtension"],
   true_auto_stats: [
@@ -104,24 +106,27 @@ const MCPV5_MODULE_STATE_KEYS = {
 const MCPV5_DEFAULT_TIMINGS = {
   input: {
     inner_self: 120, auto_cards: 90, living_characters: 80,
-    living_meters: 45, story_card_extension: 5,
+    slow_burn: 20, living_meters: 50, story_card_extension: 5,
     true_auto_stats: 110, story_arc_engine: 35, narrative_governor: 35,
     stackable_inventory: 90, realmheart: 115,
-    character_continuity: 150, ar: 1, usc_e: 1
+    character_continuity: 150, ar: 1, usc_e: 1,
+    dice_roll: 1, coin_flip: 1
   },
   context: {
     inner_self: 190, auto_cards: 130, living_characters: 120,
-    living_meters: 70, story_card_extension: 175,
+    slow_burn: 1, living_meters: 75, story_card_extension: 175,
     true_auto_stats: 100, story_arc_engine: 60, narrative_governor: 55,
     stackable_inventory: 105, realmheart: 135,
-    character_continuity: 220, ar: 1, usc_e: 1
+    character_continuity: 220, ar: 1, usc_e: 1,
+    dice_roll: 1, coin_flip: 1
   },
   output: {
     inner_self: 190, auto_cards: 135, living_characters: 115,
-    living_meters: 60, story_card_extension: 5,
+    slow_burn: 25, living_meters: 65, story_card_extension: 5,
     true_auto_stats: 145, story_arc_engine: 75, narrative_governor: 55,
     stackable_inventory: 145, realmheart: 165,
-    character_continuity: 230, ar: 75, usc_e: 35
+    character_continuity: 230, ar: 75, usc_e: 35,
+    dice_roll: 8, coin_flip: 6
   }
 };
 
@@ -130,6 +135,7 @@ const MCPV5_MODULE_CAPABILITIES = {
   inner_self: ["npcMind", "npcAction"],
   auto_cards: ["storyCards"],
   living_characters: ["npcAction", "npcMind", "npcFacts"],
+  slow_burn: ["relationshipPacing"],
   living_meters: ["resourceMeters"],
   story_card_extension: ["storyCardRecall"],
   true_auto_stats: ["stats", "inventory"],
@@ -137,7 +143,9 @@ const MCPV5_MODULE_CAPABILITIES = {
   narrative_governor: ["scenePacing", "macroPacing", "relationshipPacing"],
   stackable_inventory: ["inventory", "inventoryInterface"],
   realmheart: ["economy", "inventory"],
-  character_continuity: ["npcFacts", "npcMind", "npcAction"]
+  character_continuity: ["npcFacts", "npcMind", "npcAction"],
+  dice_roll: ["outcomeRoll"],
+  coin_flip: ["outcomeRoll"]
 };
 
 const MCPV5_PRIMARY_CONTEXT_CAPABILITY = {
@@ -166,6 +174,7 @@ const MCPV5_CAPABILITY_PLAN_FIELDS = {
   scenePacing: "scenePacingAuthority",
   relationshipPacing: "relationshipPacingAuthority",
   storyCards: "storyCardAuthority",
+  outcomeRoll: "outcomeRollAuthority",
 };
 
 function MCPV5ModuleCapabilities(moduleId) {
@@ -809,6 +818,7 @@ function MCPV5DefaultSettings() {
     macroPacingAuthority: "Automatic",
     scenePacingAuthority: "Automatic",
     relationshipPacingAuthority: "Automatic",
+    outcomeRollAuthority: "Automatic",
     workloadGuard: true,
     hookBudgetMs: 1450,
     hookSafetyMarginMs: 180,
@@ -1002,7 +1012,12 @@ function MCPV5BuildPlan(enabled, settings) {
     relationshipPacingAuthority: MCPV5Choose(
       enabled,
       settings.relationshipPacingAuthority,
-      ["narrative_governor"]
+      ["slow_burn", "narrative_governor"]
+    ),
+    outcomeRollAuthority: MCPV5Choose(
+      enabled,
+      settings.outcomeRollAuthority,
+      ["dice_roll", "coin_flip"]
     ),
     inventoryCardCooperative: false,
     overlaps: {},
@@ -1021,7 +1036,10 @@ function MCPV5BuildPlan(enabled, settings) {
     "inner_self", "living_characters", "character_continuity"
   ].filter(id => enabled[id] === true);
   plan.overlaps.pacing = [
-    "story_arc_engine", "narrative_governor"
+    "story_arc_engine", "narrative_governor", "slow_burn"
+  ].filter(id => enabled[id] === true);
+  plan.overlaps.outcome = [
+    "dice_roll", "coin_flip"
   ].filter(id => enabled[id] === true);
 
   for (let i = 0; i < selected.length; i++) {
@@ -1058,6 +1076,7 @@ function MCPV5PlanSummary(plan) {
     "Macro pacing: " + MCPV5Name(plan.macroPacingAuthority),
     "Scene pacing: " + MCPV5Name(plan.scenePacingAuthority),
     "Relationship pacing: " + MCPV5Name(plan.relationshipPacingAuthority),
+    "Outcome roll: " + MCPV5Name(plan.outcomeRollAuthority),
     "Visible output: Compatibility Host broker"
   ];
 
@@ -1080,6 +1099,7 @@ function MCPV5ConflictStatus(plan) {
   const inventory = plan.overlaps.inventory || [];
   const npc = plan.overlaps.npc || [];
   const pacing = plan.overlaps.pacing || [];
+  const outcome = plan.overlaps.outcome || [];
 
   if (inventory.length > 1) {
     lines.push(
@@ -1100,7 +1120,13 @@ function MCPV5ConflictStatus(plan) {
       "Resolved: macro, scene, and relationship pacing use separate authorities."
     );
   }
-  if (plan.mode === "Legacy Exact" && (inventory.length > 1 || npc.length > 1 || pacing.length > 1)) {
+  if (outcome.length > 1) {
+    lines.push(
+      "Resolved: one Outcome Roll authority decorates each visible response (" +
+      MCPV5Name(plan.outcomeRollAuthority) + ")."
+    );
+  }
+  if (plan.mode === "Legacy Exact" && (inventory.length > 1 || npc.length > 1 || pacing.length > 1 || outcome.length > 1)) {
     lines.push("Warning: Legacy Exact permits original sequential overlap.");
   }
   if (!lines.length) lines.push("No overlapping capability groups selected.");
@@ -1129,7 +1155,7 @@ function MCPV5CanonicalEntry(enabled, settings, plan, status) {
     "╔══════════════════════════════════════════════════════╗",
     "║              MASTER SCRIPT CONTROL PANEL             ║",
     "╚══════════════════════════════════════════════════════╝",
-    "Build 5.3.7  •  " + enabledNames.length + "/" + MCPV5_PROFILE_ORDER.length + " scripts enabled",
+    "Build 5.3.8  •  " + enabledNames.length + "/" + MCPV5_PROFILE_ORDER.length + " scripts enabled",
     "",
     "⚡ QUICK ACTIONS",
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -1144,6 +1170,7 @@ function MCPV5CanonicalEntry(enabled, settings, plan, status) {
     "Auto-Cards: " + bool(enabled.auto_cards),
     "Living Characters: " + bool(enabled.living_characters),
     "Character Continuity: " + bool(enabled.character_continuity),
+    "Slow Burn: " + bool(enabled.slow_burn),
     "",
     "# STORY • WORLD • PACING",
     "Story Card Extension: " + bool(enabled.story_card_extension),
@@ -1156,10 +1183,12 @@ function MCPV5CanonicalEntry(enabled, settings, plan, status) {
     "Stackable Inventory: " + bool(enabled.stackable_inventory),
     "RealmHeart: " + bool(enabled.realmheart),
     "",
-    "# OUTPUT CLEANUP",
-    "# AR = anti-repetition. USC-E = cliché / banned-phrase cleanup.",
+    "# OUTPUT CLEANUP • OUTCOME",
+    "# AR/USC-E clean prose. Dice/Coin are mutually arbitrated.",
     "AR: " + bool(enabled.ar),
     "USC-E: " + bool(enabled.usc_e),
+    "Dice Roll: " + bool(enabled.dice_roll),
+    "Coin Flip: " + bool(enabled.coin_flip),
     "",
     "🛡️ RECOMMENDED COMPATIBILITY SETTINGS",
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -1179,6 +1208,7 @@ function MCPV5CanonicalEntry(enabled, settings, plan, status) {
     "Macro Pacing Authority: " + field(settings.macroPacingAuthority, "Automatic", 40),
     "Scene Pacing Authority: " + field(settings.scenePacingAuthority, "Automatic", 40),
     "Relationship Pacing Authority: " + field(settings.relationshipPacingAuthority, "Automatic", 40),
+    "Outcome Roll Authority: " + field(settings.outcomeRollAuthority, "Automatic", 40),
     "",
     "⏱️ PERFORMANCE & TROUBLESHOOTING",
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -1357,6 +1387,11 @@ function MCPV5SyncControls() {
       entry,
       "Relationship Pacing Authority",
       defaults.relationshipPacingAuthority
+    ),
+    outcomeRollAuthority: MCPV5ReadString(
+      entry,
+      "Outcome Roll Authority",
+      defaults.outcomeRollAuthority
     ),
     workloadGuard: MCPV5ReadBoolean(
       entry, "Workload Guard", defaults.workloadGuard
@@ -1541,6 +1576,11 @@ function MCPV5HideFromStoryCardExtension(card) {
   if (keys === MCPV5_CARD_KEYS || title === MCPV5_CARD_TITLE) return true;
   if (keys === "%RM%" || title === "⚙️ Living Meters") return true;
   if (keys === "[CONFIG] Banned words") return true;
+  if (
+    typeof card.entry === "string" &&
+    card.entry.includes("Evolution Stages") &&
+    /Character Name\s*:/i.test(card.entry)
+  ) return true;
   if (typeof card.entry === "string" && card.entry.includes("# Put phrases in this story card to remove them.")) return true;
   if (keys.startsWith("__CC_STABLE_CARD__:")) return true;
   if (lowerKeys.startsWith("lc-thoughts:")) return true;
@@ -3085,6 +3125,10 @@ function MCPV5EligibleModules(plan) {
     if (!plan || !plan.effective || plan.effective[id] !== true) continue;
     if (plan.dependencyOnly && plan.dependencyOnly[id]) continue;
     if (id === "auto_cards" && plan.effective.inner_self === true) continue;
+    if (
+      (id === "dice_roll" || id === "coin_flip") &&
+      id !== plan.outcomeRollAuthority
+    ) continue;
     out.push(id);
   }
   return out;
@@ -3093,8 +3137,14 @@ function MCPV5EligibleModules(plan) {
 function MCPV5BuildActionSchedule(plan, settings, inputText) {
   const root = MCPV5Root();
   const eligible = MCPV5EligibleModules(plan);
-  const finalFilters = eligible.filter(id => id === "ar" || id === "usc_e");
-  const ordinary = eligible.filter(id => id !== "ar" && id !== "usc_e");
+  const fixedOutput = eligible.filter(id => (
+    id === "ar" ||
+    id === "usc_e" ||
+    id === "slow_burn" ||
+    id === plan.outcomeRollAuthority
+  ));
+  const fixedOutputSet = new Set(fixedOutput);
+  const ordinary = eligible.filter(id => !fixedOutputSet.has(id));
   const cursor = ordinary.length
     ? root.scheduler.actionCursor % ordinary.length
     : 0;
@@ -3105,9 +3155,15 @@ function MCPV5BuildActionSchedule(plan, settings, inputText) {
   let selected = rotated.slice();
   const skipped = [];
   const projectedTotals = {
-    input: 0,
-    context: 0,
-    output: finalFilters.reduce(
+    input: fixedOutput.reduce(
+      (total, id) => total + MCPV5ExpectedTiming("input", id),
+      0
+    ),
+    context: fixedOutput.reduce(
+      (total, id) => total + MCPV5ExpectedTiming("context", id),
+      0
+    ),
+    output: fixedOutput.reduce(
       (total, id) => total + MCPV5ExpectedTiming("output", id),
       0
     )
@@ -3158,9 +3214,9 @@ function MCPV5BuildActionSchedule(plan, settings, inputText) {
     ) % ordinary.length;
   }
 
-  // Output-only cleanup filters are cheap and must run on every normal visible
-  // Output. Their Output cost was reserved before ordinary module selection.
-  selected = selected.concat(finalFilters);
+  // Lightweight final-stage modules must run on every normal visible Output.
+  // Their hook costs were reserved before ordinary module selection.
+  selected = selected.concat(fixedOutput);
 
   const action = Number.isFinite(info && info.actionCount)
     ? info.actionCount
@@ -45439,14 +45495,13 @@ function MCPV5Create_living_meters() {
       return engineInfo[property];
     }
   });
-
 /// <reference no-default-lib="true"/>
 /// <reference lib="es2022"/>
 
 // SPDX-License-Identifier: MIT
 
 /* ============================================================================
- * LIVING METERS v1: a resource framework for AI Dungeon
+ * LIVING METERS v1.2.0: a resource framework for AI Dungeon
  *
  * Copyright (c) 2026 Oratorian. MIT licensed; see the LICENSE file.
  * You may bundle this into your own script. Keeping this notice is all that
@@ -45488,9 +45543,11 @@ globalThis.info ??= {};
 
 const RM_CONFIG = {
   // Start from a preset, then add or override resources below.
-  // "survival" | "fantasy" | "scifi" | "noir" | "none"
+  // "survival" | "fantasy" | "scifi" | "noir" | "mechanic" | "none" |
+
   // If preset is "none", no resources are added by default and the preset section is ignored.
   // You must then define all resources and triggers you want in the "resources" array below.
+  // Starting from line 77 and ending on line 261
   preset: "none",
 
   // Resources defined here are MERGED over the preset, matched by `id`.
@@ -45715,6 +45772,12 @@ const RM_CONFIG = {
   // Show a toast to the player when a resource crosses into a new band.
   announceBandChanges: true,
 
+  // What separates rows inside a toast. The client collapses whitespace, so a
+  // newline is only a space and a padded block turns into one wrapped
+  // paragraph. A visible marker survives that. If you find a break that does
+  // work in your client, put it here: "\n\n" and "<br>" are the two worth trying.
+  toastSeparator: "   \u00b7   ",
+
   // Show the full status toast every N turns. 0 disables.
   statusEvery: 0,
 
@@ -45730,6 +45793,11 @@ const RM_CONFIG = {
   // let commands fall through to the AI instead (no banner, costs a
   // generation). See README "Why does a command show an error banner?".
   haltOnCommand: true,
+
+  // Ignore a trigger word sitting inside a negated clause, so "you do not
+  // eat" no longer feeds the character. A negator only reaches back to the
+  // last sentence break. Set false for the old behaviour.
+  negationGuard: true,
 
   // Scan player input as well as AI output for trigger matches.
   scanInput: true,
@@ -45930,6 +45998,172 @@ const RM_PRESETS = {
       ],
     },
   ],
+  // ==========================================================================
+  // MECHANIC — a machine you have to keep alive.
+  //
+  // Written for long-haul trucking but it fits any scenario where the vehicle
+  // is a character: haulage, a road trip in a dying van, a rally, a convoy.
+  //
+  // The design intent is that almost nothing here fails on its own. It fails
+  // because of what you did two hours ago. Climbing a grade burns diesel AND
+  // cooks the coolant. Coming down the far side costs brakes, and standing on
+  // the service brakes instead of gearing down costs three times as much.
+  // Repairs cost money you only get by delivering, and delivering costs hours
+  // you only get back by stopping for the night.
+  //
+  // Watch how "grade", "brake job" and "shut down" each appear on several
+  // resources at once. That is how one narrated moment moves three numbers.
+  // ==========================================================================
+  mechanic: [
+    {
+      id: "engine", label: "Engine", icon: "🔧",
+      // Wears very slowly with distance even when nothing goes wrong, which is
+      // what stops a well-maintained truck from simply sitting at 100 forever.
+      min: 0, max: 100, start: 82, perTurn: -0.2,
+      bands: [
+        { upTo: 0, name: "seized", tell: "The engine is dead. It will not turn over, it will not be coaxed back, and the vehicle is going nowhere without a tow. Treat this as final." },
+        { upTo: 25, name: "failing", tell: "The engine is failing. It misfires, loses power on any incline, and something metallic is knocking down there. The character expects it to let go at any moment." },
+        { upTo: 60, name: "rough", tell: "The engine runs rough. It smokes on startup, hesitates under load, and the character has learned which noises to ignore and which to worry about." },
+        { upTo: 100, name: "sound", tell: "" },
+      ],
+      triggers: [
+        { on: "output", words: ["blown gasket", "head gasket", "threw a rod", "turbo failure", "limp mode", "check engine", "engine light", "knocking", "seiz*"], delta: -22 },
+        { on: "both", words: ["overhaul*", "rebuild the engine", "mechanic", "repair shop", "service the truck", "new turbo", "top up the oil", "oil change"], delta: 32 },
+        // Abuse it and it remembers. "money shift" is a missed downshift at
+        // speed, which is exactly the sort of thing a driver does once.
+        { on: "both", words: ["redlin*", "over-rev*", "float the gears", "money shift", "ride the clutch"], delta: -9 },
+      ],
+    },
+    {
+      id: "fuel", label: "Diesel", icon: "⛽",
+      min: 0, max: 100, start: 55, perTurn: -2.2,
+      bands: [
+        { upTo: 0, name: "dry", tell: "The tanks are dry. The engine has coughed itself quiet and the vehicle is coasting to the shoulder on momentum alone." },
+        { upTo: 12, name: "fumes", tell: "The fuel gauge is below the peg and the low-fuel light has been on long enough that the character has stopped looking at it. Every exit sign matters now." },
+        { upTo: 32, name: "low", tell: "Fuel is low. The character is doing arithmetic about the next fuel stop instead of paying attention to the road." },
+        { upTo: 100, name: "ok", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["fuel island", "fuel up", "fuel stop", "fill the tanks", "top off the tanks", "refuel*", "diesel pump"], delta: 58 },
+        { on: "both", words: ["grade", "climb*", "long pull", "mountain pass", "hammer down", "open her up"], delta: -7 },
+        { on: "both", words: ["idle", "idles", "idling", "idled"], delta: -3 },
+      ],
+    },
+    {
+      id: "temp", label: "Coolant", icon: "🌡️",
+      // Inverted: HIGH is bad. Note the min is 160, not 0 — this is a gauge in
+      // degrees, and a running engine has a floor it never drops below. It
+      // sheds heat on its own every turn, so heat is a debt, not a wound.
+      min: 160, max: 260, start: 190, perTurn: -3,
+      bands: [
+        { upTo: 205, name: "normal", tell: "" },
+        { upTo: 232, name: "hot", tell: "The temperature gauge is well above normal and still climbing. The character keeps glancing at it, and the heater is on full with the windows down to pull heat off the engine." },
+        { upTo: 260, name: "overheating", tell: "The engine is overheating badly. Steam, an alarm, the smell of hot coolant. Pushing on from here does permanent damage and the character knows it." },
+      ],
+      triggers: [
+        { on: "both", words: ["grade", "climb*", "long pull", "mountain pass", "heavy load", "overweight", "air conditioning", "towing"], delta: 19 },
+        { on: "both", words: ["pull over", "shut down", "shut it down", "let her cool", "let it cool", "coolant", "radiator", "downshift*", "idle down"], delta: -26 },
+        { on: "output", words: ["overheat*", "steam", "boiled over", "boiling over", "temperature alarm", "coolant leak"], delta: 21 },
+      ],
+    },
+    {
+      id: "tires", label: "Tires", icon: "🛞",
+      min: 0, max: 100, start: 70, perTurn: -0.4,
+      bands: [
+        { upTo: 0, name: "blown", tell: "A tire is gone, running on the casing or the rim. The vehicle pulls hard to one side and cannot be driven any distance like this." },
+        { upTo: 20, name: "bald", tell: "The tires are down to the cords. They slip on anything wet and the character takes corners like the road is made of glass." },
+        { upTo: 55, name: "worn", tell: "The tires are worn thin and uneven. The character can hear them and does not like the sound." },
+        { upTo: 100, name: "good", tell: "" },
+      ],
+      triggers: [
+        { on: "output", words: ["blowout", "blew a tire", "tire blew", "flat tire", "gator", "shredded", "tread separat*"], delta: -38 },
+        { on: "both", words: ["new tires", "retread*", "tire shop", "change the tire", "swap the tire", "air up the tires", "check the pressure"], delta: 46 },
+        { on: "both", words: ["pothole*", "washboard", "rough road", "construction zone", "gravel", "curb", "curbed"], delta: -7 },
+      ],
+    },
+    {
+      id: "brakes", label: "Brakes", icon: "🛑",
+      min: 0, max: 100, start: 78, perTurn: -0.3,
+      bands: [
+        { upTo: 0, name: "gone", tell: "The brakes are gone. The pedal goes to the floor. The character is looking for a runaway ramp, a rising shoulder, anything that will take speed off without stopping the vehicle in pieces." },
+        { upTo: 22, name: "fading", tell: "The brakes are nearly gone and they smell like it. They fade after one hard application and the character is downshifting for everything instead." },
+        { upTo: 55, name: "worn", tell: "The brakes are soft and pull to one side. The character leaves a lot more room than they used to." },
+        { upTo: 100, name: "good", tell: "" },
+      ],
+      triggers: [
+        // The descent itself always costs a little. How it is driven costs the
+        // rest: standing on the service brakes is what actually kills them.
+        { on: "both", words: ["downgrade", "steep grade", "down the mountain", "descend*"], delta: -8 },
+        { on: "both", words: ["hard on the brakes", "brake hard", "braked hard", "panic stop", "stood on the brakes", "rode the brakes"], delta: -16 },
+        // The whole point of the preset in one line: doing it the right way
+        // does not repair anything, it just costs you less. Both this and the
+        // descent fire on the same turn, so a jake-braked grade is -2, not -8.
+        //
+        // Honest caveat: triggers have no conditions, so narrating an engine
+        // brake on flat ground credits you 6 you did not really earn. Keep this
+        // delta small for that reason, or delete it if your players game it.
+        { on: "both", words: ["jake brake", "engine brake", "compression brake", "low gear", "geared down", "gear down"], delta: 6 },
+        { on: "both", words: ["brake job", "new pads", "new shoes", "slack adjuster", "adjust the brakes", "brake shop"], delta: 42 },
+      ],
+    },
+    {
+      id: "hos", label: "Drive Time", icon: "⏱️",
+      // Legal driving hours left in the day. Half an hour per turn. This is the
+      // meter that makes the scenario a job rather than a drive: it is the only
+      // one you cannot fix with money, and stopping to fix it costs a night.
+      min: 0, max: 11, start: 11, perTurn: -0.5,
+      bands: [
+        { upTo: 0, name: "out of hours", tell: "The character is out of legal driving hours. Every mile from here is a violation they will have to answer for, and the pressure to find somewhere legal to park is immediate and constant." },
+        { upTo: 1, name: "final hour", tell: "Less than an hour of legal drive time is left, and the truck stops fill up long before dark. The character is weighing distance against a place to sleep." },
+        { upTo: 3, name: "running short", tell: "Drive time is running short. The character is doing the maths on whether this run makes it before the clock does." },
+        { upTo: 11, name: "legal", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["ten hour break", "10 hour break", "shut down for the night", "park for the night", "sleeper berth", "reset the clock", "34 hour"], delta: 11 },
+        // Buys you time and nothing else. If you add a DOT-attention meter,
+        // put these same words on it with a large positive delta.
+        { on: "both", words: ["fudge the log", "run illegal", "yellow log", "off the books"], delta: 3 },
+      ],
+    },
+    {
+      id: "alert", label: "Alertness", icon: "☕",
+      // Drains fast enough that fatigue arrives on its own, without needing a
+      // trigger to cause it: "tired" by about turn 12, "exhausted" by turn 24.
+      // This is the one meter that should degrade whether or not anything
+      // interesting happens, because that is what a long day in a seat is.
+      min: 0, max: 100, start: 80, perTurn: -2.4,
+      bands: [
+        { upTo: 0, name: "microsleeping", tell: "The character is falling asleep at the wheel. They are losing seconds of road at a time and coming back to a lane they do not remember choosing. Narrate this as the emergency it is." },
+        { upTo: 22, name: "exhausted", tell: "The character is dangerously tired. Their reactions are slow, their eyes keep closing, and they are arguing with themselves about stopping." },
+        { upTo: 50, name: "tired", tell: "The character is tired. Their attention drifts and they have to work to keep it on the road." },
+        { upTo: 100, name: "sharp", tell: "" },
+      ],
+      triggers: [
+        // "rest" is safe as a bare word: matching respects word boundaries, so
+        // it will not fire on "restaurant" or "arrest".
+        { on: "both", words: ["sleep", "slept", "sleeping", "nap", "napped", "rest", "rested", "sleeper berth", "shut down for the night"], delta: 58 },
+        { on: "both", words: ["coffee", "caffeine", "energy drink", "black coffee"], delta: 15 },
+        { on: "both", words: ["drove through the night", "drive through the night", "push through", "pushed through", "white line fever", "one more hour"], delta: -19 },
+      ],
+    },
+    {
+      id: "cash", label: "Settlement", icon: "💵",
+      // Starts at roughly one fill plus one repair. Tight on purpose: the
+      // maintenance decisions only matter if you cannot afford all of them.
+      min: 0, max: 99999, start: 1400, perTurn: 0,
+      bands: [
+        { upTo: 0, name: "broke", tell: "The character has no money at all. The fuel card is declined, the shop will not start work, and there is nothing to eat that is not already in the cab." },
+        { upTo: 250, name: "tight", tell: "Money is tight enough that the character is choosing between fuel and repairs, and putting off the repair." },
+        { upTo: 99999, name: "ok", tell: "" },
+      ],
+      triggers: [
+        { on: "both", words: ["deliver*", "unload*", "drop the trailer", "bill of lading", "got paid", "settlement", "signed for the load"], delta: 2200 },
+        { on: "both", words: ["mechanic", "repair shop", "brake job", "new tires", "overhaul*", "towed", "tow truck"], delta: -680 },
+        { on: "both", words: ["fuel island", "fuel up", "fill the tanks", "refuel*"], delta: -410 },
+        { on: "output", words: ["ticket", "citation", "fined", "out of service", "violation"], delta: -900 },
+      ],
+    },
+  ],
 };
 
 /* ============================================================================
@@ -45997,6 +46231,50 @@ const RM = (function () {
     return escapeRe(raw);
   }
 
+  // A trigger word inside a negated clause should not fire. Without this every
+  // preset pays out for declining: "you do not eat" fed the character and "you
+  // don't drink" watered them, because the pattern only asks whether the
+  // word is present anywhere.
+  //
+  // Bare "no" and "none" are deliberately absent. They negate as often as not,
+  // but they also appear in "no choice but to eat", where suppressing would be
+  // wrong, and that phrasing is common in the survival prose these presets are
+  // written for.
+  const NEGATORS = /\bnot\b|n['’]t\b|\bnever\b|\bcannot\b|\brefus\w*|\bdeclin\w*|\bavoid\w*|\bwithout\b|\binstead of\b|\brather than\b|\bunable to\b|\bfail\w* to\b|\bdecid\w* against\b/i;
+
+  // A cap for a very long sentence; the clause bound below usually bites first.
+  const NEG_WINDOW = 80;
+
+  function negated(src, at) {
+    let clause = src.slice(Math.max(0, at - NEG_WINDOW), at);
+    // Keep only what follows the last clause break, so "It was not a good day.
+    // You eat." does not suppress the meal, and neither does "you do not eat the
+    // berries, then you eat the fish".
+    //
+    // A comma counts as a break. That mis-reads a negated list, "you do not eat,
+    // drink, or rest", where the later items should stay suppressed. It is still
+    // the better default: getting a comma wrong means firing, which is exactly
+    // what this framework did before the guard existed, while leaving the comma
+    // out means silently withholding a payout the player earned. Prefer the
+    // error that matches the old behaviour.
+    const cut = clause.search(/[.!?;:,\n][^.!?;:,\n]*$/);
+    if (cut !== -1) clause = clause.slice(cut + 1);
+    return NEGATORS.test(clause);
+  }
+
+  // True if the word appears at least once OUTSIDE a negated clause. Every
+  // occurrence is examined, so "you do not eat the berries, then you eat the
+  // fish" still counts as eating.
+  function fires(re, src) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      if (m[0].length === 0) { re.lastIndex++; continue; }
+      if (!RM_CONFIG.negationGuard || !negated(src, m.index)) return true;
+    }
+    return false;
+  }
+
   // Turns a creator's trigger into { on, re, delta }, or records why it can't.
   function compileTrigger(resId, t, index) {
     const where = `${resId} trigger #${index + 1}`;
@@ -46021,7 +46299,13 @@ const RM = (function () {
         );
         return null;
       }
-      return { on: on, re: t.match, delta: t.delta, words: ["(custom pattern)"] };
+      // Re-flagged with "g" so fires() can walk it. The author's own source
+      // and case sensitivity are preserved.
+      const gflags = t.match.flags.indexOf("g") === -1 ? t.match.flags + "g" : t.match.flags;
+      return {
+        on: on, re: new RegExp(t.match.source, gflags),
+        delta: t.delta, words: ["(custom pattern)"],
+      };
     }
 
     if (!Array.isArray(t.words) || !t.words.length) {
@@ -46043,12 +46327,13 @@ const RM = (function () {
     // Boundaries on both sides, so "rest" fires on "you rest" but not on
     // "restaurant" or "arrest". \b is not used because it needs a word
     // character to sit against, which breaks entries like "c++" or "o2!".
-    // The leading alternative consumes a character, which is harmless for
-    // .test(), and avoids needing lookbehind support.
+    // The leading alternative consumes a character, which shifts the reported
+    // index back by one; harmless, because the guard reads the clause before it.
     try {
       return {
         on: on,
-        re: new RegExp("(?:^|\\W)(?:" + alts.join("|") + ")(?!\\w)", "i"),
+        // "g" so fires() can walk every occurrence, not only the first.
+        re: new RegExp("(?:^|\\W)(?:" + alts.join("|") + ")(?!\\w)", "gi"),
         delta: t.delta,
         words: t.words.slice(),   // kept for introspection and testing
       };
@@ -46134,12 +46419,14 @@ const RM = (function () {
       hlen: 0,         // history.length at the last counted turn
       outHash: 0,      // hash of the last output we scanned
       msgPrev: "",     // last toast we wrote, for cooperative state.message
+      msgOpen: false,  // a flush already happened this generation; add to it
       cardOK: true,    // false once we detect story cards are unavailable
       warned: false,
       pendingStop: false, // a command ran in Input; Context executes the halt
       cfgWarned: false,   // config problems have been shown once
       fired: {},          // trigger keys already counted this turn
       over: {},        // player overrides parsed from the story card
+      overWarn: "",    // unknown card keys we have already flagged
     };
   }
 
@@ -46161,12 +46448,14 @@ const RM = (function () {
     if (isNum(raw.hlen)) s.hlen = raw.hlen;
     if (isNum(raw.outHash)) s.outHash = raw.outHash;
     if (typeof raw.msgPrev === "string") s.msgPrev = raw.msgPrev;
+    if (typeof raw.msgOpen === "boolean") s.msgOpen = raw.msgOpen;
     if (typeof raw.cardOK === "boolean") s.cardOK = raw.cardOK;
     if (typeof raw.warned === "boolean") s.warned = raw.warned;
     if (typeof raw.pendingStop === "boolean") s.pendingStop = raw.pendingStop;
     if (typeof raw.cfgWarned === "boolean") s.cfgWarned = raw.cfgWarned;
     if (raw.fired && typeof raw.fired === "object") s.fired = raw.fired;
     if (raw.over && typeof raw.over === "object") s.over = raw.over;
+    if (typeof raw.overWarn === "string") s.overWarn = raw.overWarn;
     return s;
   }
 
@@ -46211,6 +46500,38 @@ const RM = (function () {
       else over[key] = rawVal;
     }
     return over;
+  }
+
+  // Every key the card can actually set. parseOverrides accepts any
+  // "key = value" line, so without this a typo, or a creator-only setting like
+  // statusEvery, is stored forever and silently ignored. That is how a player
+  // ends up convinced the card does nothing.
+  const OVER_GLOBALS = ["difficulty", "statusEvery"];
+  const OVER_FIELDS = ["min", "max", "start", "perTurn", "visible", "enabled"];
+
+  function isOverrideKey(key) {
+    if (OVER_GLOBALS.indexOf(key) !== -1) return true;
+    const dot = key.lastIndexOf(".");
+    if (dot === -1) return false;
+    return defs().some((d) => d.id === key.slice(0, dot))
+      && OVER_FIELDS.indexOf(key.slice(dot + 1)) !== -1;
+  }
+
+  function checkOverrides(s) {
+    const bad = [];
+    for (const key of Object.keys(s.over)) {
+      if (isOverrideKey(key)) continue;
+      bad.push(key);
+    }
+    // Keyed on the exact set, so fixing the card stops the warning and a new
+    // mistake raises a fresh one.
+    const sig = bad.join(",");
+    if (sig === s.overWarn) return;
+    s.overWarn = sig;
+    if (!bad.length) return;
+    toast(s, "Living Meters card: " + bad.map((k) => '"' + k + '"').join(", ") +
+      (bad.length > 1 ? " are not settings." : " is not a setting.") +
+      " See the notes at the top of the card.");
   }
 
   function optNum(s, key, fallback) {
@@ -46324,7 +46645,7 @@ const RM = (function () {
         if (t.on !== "both" && t.on !== phase) continue;
         const key = e.id + "#" + i;
         if (s.fired[key]) continue;
-        if (!t.re.test(src)) continue;
+        if (!fires(t.re, src)) continue;
         s.fired[key] = 1;
         const r = addVal(s, e.id, t.delta);
         if (r && r.before !== r.after) changes.push(r);
@@ -46367,6 +46688,31 @@ const RM = (function () {
     return rows.join("\n");
   }
 
+  // statusBlock is for the story card, which keeps its whitespace. A toast does
+  // not, so padEnd there is wasted and the columns never line up. This is the
+  // same information laid out to survive being wrapped at any width.
+  function statusToast(s) {
+    const parts = [];
+    for (const e of activeDefs(s)) {
+      if (!e.visible) continue;
+      const v = s.res[e.id];
+      const b = bandOf(e, v);
+      // Non-breaking spaces inside a row, ordinary ones only around the
+      // separator, so a wrap can land BETWEEN rows and never inside one. That
+      // is what stops a short label being stranded from its bar, which is a
+      // single unbreakable token. U+00A0 also survives whitespace collapsing,
+      // unlike the padding this used to rely on.
+      const NB = "\u00a0";
+      parts.push([
+        e.icon || "\u2022",
+        e.label.replace(/ /g, NB),    // NBSP: a wrap must not split it
+        bar(v, e.min, e.max),
+        `${Math.round(v)}/${Math.round(e.max)}` + (b.name ? `${NB}(${b.name})` : ""),
+      ].join(NB));
+    }
+    return parts.join(RM_CONFIG.toastSeparator || "   \u00b7   ");
+  }
+
   // What the AI is told. Complete sentences only: an unterminated fragment in
   // frontMemory invites the model to finish it.
   function directive(s) {
@@ -46395,6 +46741,14 @@ const RM = (function () {
   // hook, so this buffer resets by itself each time.
   let TOASTS = [];
 
+  // A toast cannot hold a line break. The client collapses whitespace, so a
+  // newline renders as a space and the padded status block became one wrapped
+  // paragraph; worse, a bar is a single unbreakable token, so each row's icon
+  // and label fitted at the end of the previous visual line while the bar
+  // wrapped. Rows are separated by a visible marker instead, which survives
+  // wrapping whatever the renderer turns out to be.
+  const BREAK = RM_CONFIG.toastSeparator || "   \u00b7   ";
+
   function toast(s, msg) {
     if (msg && TOASTS.indexOf(msg) === -1) TOASTS.push(msg);
   }
@@ -46403,14 +46757,29 @@ const RM = (function () {
   // put there ourselves, so we never clobber another script's toast.
   function flushToast(s) {
     if (!TOASTS.length) return;
-    const msg = TOASTS.join("\n");
+    // Every newline has to become a hard break, including ones inside a single
+    // queued message such as the status block or the /help list.
+    const msg = TOASTS.join("\n").split("\n").join(BREAK);
     TOASTS = [];
     const current = typeof state.message === "string" ? state.message : "";
     if (current && current !== s.msgPrev) return; // somebody else owns the slot
-    // The client suppresses a toast identical to the previous one; perturb it.
-    const out = current === msg ? msg + " " : msg;
+
+    // The Library re-executes per hook, so every hook flushes its own buffer.
+    // Within one generation, ADD to what we already wrote rather than replacing
+    // it: a card warning raised in Input, a status block queued in Context and a
+    // band announcement from Output all belong to the same moment, and whichever
+    // flushed first should not disappear.
+    let out;
+    if (current && s.msgOpen) {
+      if (current.indexOf(msg) !== -1) return;   // already on screen
+      out = current + BREAK + msg;
+    } else {
+      // The client suppresses a toast identical to the previous one; perturb it.
+      out = current === msg ? msg + " " : msg;
+    }
     state.message = out;
     s.msgPrev = out;
+    s.msgOpen = true;
   }
 
   // ---- story card ---------------------------------------------------------
@@ -46419,9 +46788,15 @@ const RM = (function () {
     "# Living Meters settings. Edit the lines below, then close this card.",
     "# Lines starting with # are ignored. Delete a line to use the default.",
     "#",
-    "#   difficulty = easy | normal | hard",
+    "# Or use the /set command, e.g.  /set statusEvery 5",
+    "#",
+    "#   difficulty  = easy | normal | hard",
+    "#   statusEvery = 5              show the full status every N turns, 0 = off",
     "#   <resource>.perTurn = -2      how much it drifts each turn",
     "#   <resource>.max     = 120     raise or lower the ceiling",
+    "#   <resource>.min     = 10      raise or lower the floor",
+    "#   <resource>.start   = 60      the value /reset restores",
+    "#   <resource>.visible = off     keep tracking it, stop showing it",
     "#   <resource>.off               stop tracking it entirely",
     "#   <resource>.on                track it again",
     "#",
@@ -46476,11 +46851,36 @@ const RM = (function () {
 
     // The player owns `description`; we only ever read it.
     s.over = parseOverrides(card.description);
+    checkOverrides(s);
 
     // We own `entry`, and it never reaches the AI because `keys` never matches.
     const block = statusBlock(s);
     const next = `Current status (read-only, updates every turn)\n\n${block}\n`;
     if (card.entry !== next) card.entry = next;
+  }
+
+  // ---- writing a setting back to the card ---------------------------------
+
+  // syncCard re-parses the card on every hook and replaces s.over, so a command
+  // that only wrote state would be erased inside the same turn. The card stays
+  // the single source of truth; /set edits it and the player can see the result.
+  function writeSetting(src, key, value) {
+    const text = typeof src === "string" ? src : "";
+    const re = new RegExp("^\\s*" + escapeRe(key) + "\\s*[=:]", "i");
+    const out = [];
+    let done = false;
+    for (const line of text.split("\n")) {
+      if (line.trim().startsWith("#") || !re.test(line)) {
+        out.push(line);
+        continue;
+      }
+      if (done) continue;                  // collapse an existing duplicate
+      out.push(key + " = " + value);
+      done = true;
+    }
+    while (out.length && out[out.length - 1].trim() === "") out.pop();
+    if (!done) out.push(key + " = " + value);
+    return out.join("\n") + "\n";
   }
 
   // ---- commands -----------------------------------------------------------
@@ -46502,6 +46902,8 @@ const RM = (function () {
       `${p}<id> +N       add to a resource   (e.g. ${p}hp +10)`,
       `${p}<id> -N       subtract from it`,
       `${p}<id> =N       set it exactly`,
+      `${p}set <k> <v>   change a setting  (e.g. ${p}set statusEvery 5)`,
+      `${p}set           show what you have changed`,
       `${p}reset         restore starting values`,
       `${p}help          this list`,
     ].join("\n");
@@ -46519,12 +46921,39 @@ const RM = (function () {
     const cmd = parts[0].toLowerCase();
 
     if (cmd === "help") return helpText();
-    if (cmd === "status") return statusBlock(s) || "No resources are being tracked.";
+    if (cmd === "status") return statusToast(s) || "No resources are being tracked.";
+
+    if (cmd === "set") {
+      const key = parts[1];
+      const value = parts.slice(2).join(" ");
+      if (!key) {
+        const keys = Object.keys(s.over);
+        return keys.length
+          ? "Your settings:\n" + keys.map((k) => k + " = " + s.over[k]).join("\n")
+          : `Nothing changed yet. Try ${p}set statusEvery 5`;
+      }
+      if (!isOverrideKey(key)) {
+        return `"${key}" is not a setting you can change. Try ${p}difficulty, ` +
+          `${p}set statusEvery 5, or ${p}set <resource>.perTurn -2. ${p}help lists the rest.`;
+      }
+      if (!value) return `Usage: ${p}set ${key} <value>`;
+
+      const card = findCard();
+      if (!card) {
+        return "The settings card is not available. Turn on Gameplay > Memory System > Memory Bank.";
+      }
+      card.description = writeSetting(card.description, key, value);
+      s.over = parseOverrides(card.description);
+      s.overWarn = "";                     // a new key may need flagging again
+      return `${key} = ${value}`;
+    }
 
     if (cmd === "reset") {
-      for (const d of defs()) setVal(s, d.id, d.start);
+      // eff() rather than the raw definition, so a start set in the card
+      // is what /reset restores.
+      for (const d of defs()) setVal(s, d.id, eff(s, d).start);
       s.band = {};
-      return "Meters reset.\n\n" + statusBlock(s);
+      return "Meters reset. " + statusToast(s);
     }
 
     // "<id> +10" / "<id> -5" / "<id> =80" / "<id>" to query one
@@ -46590,6 +47019,7 @@ const RM = (function () {
 
     try {
       s.fired = {};              // a new player action begins a new turn
+      s.msgOpen = false;         // and a new message, not an addition
       reportProblems(s);
       syncCard(s);
 
@@ -46643,8 +47073,11 @@ const RM = (function () {
       if (turnAdvanced(s)) {
         tick(s);
         announce(s);
-        if (RM_CONFIG.statusEvery > 0 && s.turn % RM_CONFIG.statusEvery === 0) {
-          toast(s, statusBlock(s));
+        // Through the overrides, not RM_CONFIG directly, or a player can
+        // set this and nothing will ever read it.
+        const every = optNum(s, "statusEvery", RM_CONFIG.statusEvery);
+        if (every > 0 && s.turn % every === 0) {
+          toast(s, statusToast(s));
         }
       }
 
@@ -46697,6 +47130,10 @@ const RM = (function () {
     }
 
     flushToast(s);
+    // Output is the last hook of every generation, including a Continue, which
+    // never calls Input. Closing the message here is what keeps the next
+    // generation from appending to this one.
+    s.msgOpen = false;
     persist(s);
     // Never return an empty string: onOutput throws a player-visible error.
     return out.length ? out : " ";
@@ -46715,6 +47152,7 @@ const RM = (function () {
     all: () => hydrate().res,
     status: () => statusBlock(hydrate()),
     line: () => statusLine(hydrate()),
+    toastLine: () => statusToast(hydrate()),
     directive: () => directive(hydrate()),
 
     // Effective definitions after player overrides, as plain JSON-safe data.
@@ -46734,6 +47172,14 @@ const RM = (function () {
         };
       });
     },
+    // Queue a toast through RM's own buffer instead of writing state.message
+    // yourself. flushToast stays the single writer, so a scenario add-on's
+    // message and a band announcement on the same turn are joined rather than
+    // one silently losing the slot: assigning state.message directly makes RM
+    // yield, and the band is already recorded as announced, so it never
+    // returns. Call this before RM.input/RM.context in the same hook.
+    toast: (msg) => { toast(null, msg); },
+
     problems: () => { defs(); return PROBLEMS.slice(); },
   };
 })();
@@ -49423,9 +49869,392 @@ function MCPV5Create_usc_e() {
   return { run };
 }
 
+function MCPV5Create_slow_burn() {
+/**
+ * SLOWBURN Evolution Engine
+ * Centralized logic for NPC personality tracking and Author's Note management.
+ */
+function SLOWBURN(type, textString = "") {
+  // 1. INITIALIZE STATE & DEFAULT SETTINGS
+  if (!state.npc) state.npc = { name: "Companion", level: 0 };
+  let gainRate = 0.2;
+  let drainRate = 0.5;
+  let currentInfo = "Normal behavior.";
+  let bestMatchThreshold = -1;
+
+  // 2. MULTI-CARD DATABASE SCAN
+  storyCards.forEach(card => {
+    if (card.entry.includes("Evolution Stages")) {
+      // Discover Metadata (Name and Rates)
+      const nMatch = card.entry.match(/Character Name:\s*(.*)/i);
+      const gMatch = card.entry.match(/Gain Rate:\s*([\d.]+)/i);
+      const dMatch = card.entry.match(/Drain Rate:\s*([\d.]+)/i);
+      
+      if (nMatch) state.npc.name = nMatch[1].trim();
+      if (gMatch) gainRate = parseFloat(gMatch[1]);
+      if (dMatch) drainRate = parseFloat(dMatch[1]);
+
+      // Discover Current Evolution Stage
+      const lines = card.entry.split('\n');
+      lines.forEach(line => {
+        const match = line.match(/^(\d+):\s*(.*)/);
+        if (match) {
+          const threshold = parseInt(match[1]);
+          if (state.npc.level >= threshold && threshold > bestMatchThreshold) {
+            bestMatchThreshold = threshold;
+            currentInfo = match[2].trim();
+          }
+        }
+      });
+    }
+  });
+
+  // 3. SCORING LOGIC (Only runs during Output)
+  // Scoring only triggers if 'textString' is provided (the AI's response)
+  if (type === "output" && textString) {
+    const aiText = textString.toLowerCase();
+    
+    // Interaction Filter: Only score if the NPC is talking to the player
+    if (aiText.includes("you") || aiText.includes("your")) {
+      const pos = ["nod", "agree", "thank", "polite", "helpful", "share", "listen", "patience", "respect", "kindly", "calm", "pleasant", "thoughtful", "admire", "honest", "cooperate", "assist", "welcome", "comfort", "reassure", "friendly", "softly", "laugh", "chuckled", "curious", "interest", "civility", "courteous", "stable", "blush", "smile", "yield", "soften", "lean", "whisper", "tremble", "warm", "accept", "nuzzle", "giggle", "sigh", "purr", "moan", "relax", "melt", "cuddle", "hug", "kiss", "blossom", "trust", "eager", "comply", "obey", "shiver", "stroke", "caress", "devotion", "flutter", "glow", "radiate"];
+      const neg = ["recoil", "cold", "stern", "angry", "refuse", "snap", "distant", "harsh", "glare", "tense", "shove", "push", "slap", "hiss", "growl", "sneer", "scowl", "scoff", "resist", "struggle", "flinch", "avoid", "ignore", "disdain", "disgust", "revolt", "cringe", "stiffen", "withdraw", "shout", "yell", "threaten", "spite", "bitter", "rude", "insult"];
+
+      let change = 0;
+      // Unique Word Check: .includes() only checks if the word exists once in the string,
+      // preventing "sigh sigh sigh" from being counted multiple times.
+      pos.forEach(word => { if (aiText.includes(word)) change += gainRate; });
+      neg.forEach(word => { if (aiText.includes(word)) change -= drainRate; });
+      
+      state.npc.level = Math.max(0, Math.min(100, state.npc.level + change));
+    }
+  }
+
+  // 4. SMART AUTHOR'S NOTE INJECTION (End of Note)
+  const evoString = `[${state.npc.name}'s State: ${currentInfo} (${state.npc.level.toFixed(1)}/100)]`;
+  let note = state.memory.authorsNote || "";
+  const evoRegex = /\[.*?'s State:.*?\]|\[EVO:.*?\]/g;
+
+  if (evoRegex.test(note)) {
+    note = note.replace(evoRegex, "").trim();
+  }
+  state.memory.authorsNote = (note + " " + evoString).trim();
+}
+
+  function escapeSlowBurnRegExp(value) {
+    return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function slowBurnStore() {
+    if (
+      !state.mcpSlowBurn ||
+      typeof state.mcpSlowBurn !== "object" ||
+      Array.isArray(state.mcpSlowBurn)
+    ) {
+      let migrated = null;
+      if (
+        state.npc &&
+        typeof state.npc === "object" &&
+        !Array.isArray(state.npc) &&
+        typeof state.npc.name === "string" &&
+        Number.isFinite(Number(state.npc.level)) &&
+        Object.keys(state.npc).every(key => key === "name" || key === "level")
+      ) {
+        migrated = {
+          name: String(state.npc.name || "Companion"),
+          level: Math.max(0, Math.min(100, Number(state.npc.level) || 0))
+        };
+      }
+      state.mcpSlowBurn = {
+        version: 1,
+        npc: migrated || { name: "Companion", level: 0 },
+        marker: ""
+      };
+    }
+    if (
+      !state.mcpSlowBurn.npc ||
+      typeof state.mcpSlowBurn.npc !== "object" ||
+      Array.isArray(state.mcpSlowBurn.npc)
+    ) {
+      state.mcpSlowBurn.npc = { name: "Companion", level: 0 };
+    }
+    return state.mcpSlowBurn;
+  }
+
+  function run(tab) {
+    const currentText = MCPV5SafeText(globalThis.text, "\u200B");
+    if (tab !== "input" && tab !== "output") return { text: currentText };
+
+    const store = slowBurnStore();
+    const hadNpc = Object.prototype.hasOwnProperty.call(state, "npc");
+    const priorNpc = state.npc;
+    if (!state.memory || typeof state.memory !== "object" || Array.isArray(state.memory)) {
+      state.memory = {};
+    }
+    const priorNote = typeof state.memory.authorsNote === "string"
+      ? state.memory.authorsNote
+      : "";
+    const priorMarker = typeof store.marker === "string" ? store.marker : "";
+
+    try {
+      state.npc = {
+        name: typeof store.npc.name === "string" && store.npc.name.trim()
+          ? store.npc.name
+          : "Companion",
+        level: Math.max(0, Math.min(100, Number(store.npc.level) || 0))
+      };
+
+      if (tab === "input") SLOWBURN("input");
+      else SLOWBURN("output", currentText);
+
+      store.npc = {
+        name: typeof state.npc.name === "string" && state.npc.name.trim()
+          ? state.npc.name
+          : "Companion",
+        level: Math.max(0, Math.min(100, Number(state.npc.level) || 0))
+      };
+
+      const producedNote = typeof state.memory.authorsNote === "string"
+        ? state.memory.authorsNote
+        : "";
+      const markers = producedNote.match(/\[[^\]\r\n]*?'s State:[^\]\r\n]*\]/g) || [];
+      const newMarker = markers.length ? markers[markers.length - 1] : "";
+
+      let cleanNote = priorNote;
+      if (priorMarker) {
+        cleanNote = cleanNote.replace(
+          new RegExp(escapeSlowBurnRegExp(priorMarker), "g"),
+          ""
+        );
+      } else if (newMarker && store.npc.name) {
+        cleanNote = cleanNote.replace(
+          new RegExp(
+            "\\[" + escapeSlowBurnRegExp(store.npc.name) +
+            "'s State:[^\\]\\r\\n]*\\]",
+            "g"
+          ),
+          ""
+        );
+      }
+      cleanNote = cleanNote
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+
+      const role = MCPV5CapabilityRole(
+        "slow_burn",
+        "relationshipPacing",
+        MCPV5_ACTIVE_PLAN
+      );
+      const publish = role !== "observer";
+      state.memory.authorsNote = (
+        publish && newMarker
+          ? [cleanNote, newMarker].filter(Boolean).join("\n\n")
+          : cleanNote
+      ).trim();
+      store.marker = publish ? newMarker : "";
+
+      return { text: currentText };
+    } finally {
+      if (hadNpc) state.npc = priorNpc;
+      else {
+        try { delete state.npc; } catch {}
+      }
+    }
+  }
+
+  return { run };
+}
+
+function MCPV5Create_dice_roll() {
+// Modified Dice Roll Script
+// Modification made by grenith
+// Forked from Dice Roll created by PoisonTea
+
+const modifier = (text) => {
+let modifiedText = text;
+// --- Dice Roll Script - by 💀🍵 PoisonTea ---
+let tryMatch;
+if (
+(tryMatch = modifiedText.match(/(You (assuredly|confidently|doubtlessly|skillfully) (try|attempt|cast|attack|shoot|throw|brace yourself)[^.?!]*[.?!])/))
+) {
+const diceResults = [
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Critical Success!]",
+"[🎲 Dice Roll: Critical Success!]"
+];
+const outcome = diceResults[Math.floor(Math.random() * diceResults.length)];
+modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+} else if (
+(tryMatch = modifiedText.match(/(You (clumsily|tentatively|doubtfully|hesitantly|haphazardly) (try|attempt|cast|attack|shoot|throw|brace yourself)[^.?!]*[.?!])/))
+) {
+const diceResults = [
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Critical Failure!]",
+"[🎲 Dice Roll: Critical Failure!]"
+];
+const outcome = diceResults[Math.floor(Math.random() * diceResults.length)];
+modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+} else if (
+(tryMatch = modifiedText.match(/(You (try|tried|attempt|attempted|attempts|cast|casted|attack|attacked|shoot|shot|shoots|fired|fires|threw|throw|braced|braces|brace yourself)[^.?!]*[.?!])/))
+) {
+const diceResults = [
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Critical Success!]",
+"[🎲 Dice Roll: Critical Failure!]"
+];
+const outcome = diceResults[Math.floor(Math.random() * diceResults.length)];
+modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+} else if (
+(tryMatch = modifiedText.match(/(He (try|tries|tried|attempt|attempted|attempts|cast|casts|casted|attack|attacks|attacked|shoot|shot|shoots|fired|fires|threw|throws|braced|braces|braced himself)[^.?!]*[.?!])/))
+) {
+const diceResults = [
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Critical Success!]",
+"[🎲 Dice Roll: Critical Failure!]"
+];
+const outcome = diceResults[Math.floor(Math.random() * diceResults.length)];
+modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+} else if (
+(tryMatch = modifiedText.match(/(She (try|tries|tried|attempt|attempted|attempts|cast|casts|casted|attack|attacks|attacked|shoot|shot|shoots|fired|fires|threw|throws|braced|braces|braced himself)[^.?!]*[.?!])/))
+) {
+const diceResults = [
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Critical Success!]",
+"[🎲 Dice Roll: Critical Failure!]"
+];
+const outcome = diceResults[Math.floor(Math.random() * diceResults.length)];
+modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+} else if (
+(tryMatch = modifiedText.match(/(They (try|tries|tried|attempt|attempted|attempts|cast|casts|casted|attack|attacks|attacked|shoot|shot|fired|fires|threw|throws|braced|braces|braced themself)[^.?!]*[.?!])/))
+) {
+const diceResults = [
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Success]",
+"[🎲 Dice Roll: Partial Success]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Failure]",
+"[🎲 Dice Roll: Critical Success!]",
+"[🎲 Dice Roll: Critical Failure!]"
+];
+const outcome = diceResults[Math.floor(Math.random() * diceResults.length)];
+modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+}
+text = modifiedText; // ✅ Ensure final text includes all changes
+return { text }
+}
+// Don't modify this part
+
+  function run(tab) {
+    const currentText = MCPV5SafeText(globalThis.text, "\u200B");
+    if (tab !== "output") return { text: currentText };
+    const result = modifier(currentText);
+    return (
+      result &&
+      typeof result === "object" &&
+      typeof result.text === "string" &&
+      result.text.length
+    ) ? { text: result.text } : { text: currentText };
+  }
+
+  return { run };
+}
+
+function MCPV5Create_coin_flip() {
+ const modifier = (text) => {
+   let modifiedText = text;
+
+  // --- Chaos Coin Flip Script - by helpfulDuckie, based on Dice Roll by 💀🍵 PoisonTea ---
+  let tryMatch;
+
+  if (
+    (tryMatch = modifiedText.match(/(You (assuredly|confidently|doubtlessly|skillfully) (try|attempt|cast|attack|shoot|throw|brace yourself)[^.?!]*[.?!])/))
+  ) {
+    const CoinResults = [
+      "[🪙 Coin Flip: Critical Success!]",
+      "[🪙 Coin Flip: Critical Success!]",
+      "[🪙 Coin Flip: Critical Success!]",
+      "[🪙 Coin Flip: Critical Success!]",
+      "[🪙 Coin Flip: Critical Failure!]",
+      "[🪙 Coin Flip: Critical Failure!]"
+    ];
+    const outcome = CoinResults[Math.floor(Math.random() * CoinResults.length)];
+    modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+  } else if (
+    (tryMatch = modifiedText.match(/(You (clumsily|tentatively|doubtfully|hesitantly|haphazardly) (try|attempt|cast|attack|shoot|throw|brace yourself)[^.?!]*[.?!])/))
+  ) {
+    const CoinResults = [
+      "[🪙 Coin Flip: Critical Success!]",
+      "[🪙 Coin Flip: Critical Success!]",
+      "[🪙 Coin Flip: Critical Failure!]",
+      "[🪙 Coin Flip: Critical Failure!]",
+      "[🪙 Coin Flip: Critical Failure!]",
+      "[🪙 Coin Flip: Critical Failure!]"
+    ];
+    const outcome = CoinResults[Math.floor(Math.random() * CoinResults.length)];
+    modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+  } else if (
+    (tryMatch = modifiedText.match(/(You (try|attempt|cast|attack|shoot|throw|brace yourself)[^.?!]*[.?!])/))
+  ) {
+    const CoinResults = [
+      "[🪙 Coin Flip: Critical Success!]",
+      "[🪙 Coin Flip: Critical Failure!]"
+    ];
+    const outcome = CoinResults[Math.floor(Math.random() * CoinResults.length)];
+    modifiedText = modifiedText.replace(tryMatch[0], `${tryMatch[0].trim()} ${outcome}`);
+  }
+  text = modifiedText; // ✅ Ensure final text includes all changes
+  return { text }
+}
+
+// Don't modify this part
+
+  function run(tab) {
+    const currentText = MCPV5SafeText(globalThis.text, "\u200B");
+    if (tab !== "output") return { text: currentText };
+    const result = modifier(currentText);
+    return (
+      result &&
+      typeof result === "object" &&
+      typeof result.text === "string" &&
+      result.text.length
+    ) ? { text: result.text } : { text: currentText };
+  }
+
+  return { run };
+}
+
 const MCPV5_FACTORIES = {
   inner_package: MCPV5Create_inner_package,
   living_characters: MCPV5Create_living_characters,
+  slow_burn: MCPV5Create_slow_burn,
   living_meters: MCPV5Create_living_meters,
   story_card_extension: MCPV5Create_story_card_extension,
   true_auto_stats: MCPV5Create_true_auto_stats,
@@ -49435,7 +50264,9 @@ const MCPV5_FACTORIES = {
   realmheart: MCPV5Create_realmheart,
   character_continuity: MCPV5Create_character_continuity,
   ar: MCPV5Create_ar,
-  usc_e: MCPV5Create_usc_e
+  usc_e: MCPV5Create_usc_e,
+  dice_roll: MCPV5Create_dice_roll,
+  coin_flip: MCPV5Create_coin_flip
 };
 
 function MCPV5FactoryKey(id) {
@@ -49567,7 +50398,7 @@ function MCPV5StripRealmHeartContextLeak(value, plan) {
     );
     return cleaned;
   } catch (error) {
-    log("MCP V5.3.7 RealmHeart leak guard error:", error);
+    log("MCP V5.3.8 RealmHeart leak guard error:", error);
     return original;
   }
 }
@@ -49695,7 +50526,7 @@ function MCPV5RunProfile(id, tab, incomingText, plan) {
       MCPV5Name(id) + " / " + tab + " / " +
       String(error && error.message ? error.message : error)
     );
-    log("MCP V5.3.7 module error:", MCPV5Name(id), tab, error);
+    log("MCP V5.3.8 module error:", MCPV5Name(id), tab, error);
     return { text: original, __mcpOk: false };
   } finally {
     MCPV5RestoreModuleGlobals(globalSnapshot);
@@ -49996,9 +50827,17 @@ function MCPV5Run(tab, incomingText) {
       const protocol = order.filter(id => protocolSet.has(id));
       const finalFilterOrder = ["ar", "usc_e"].filter(id => order.includes(id));
       const finalFilterSet = new Set(finalFilterOrder);
+      const slowBurnSelected = order.includes("slow_burn");
+      const outcomeRollId = (
+        plan.outcomeRollAuthority &&
+        order.includes(plan.outcomeRollAuthority)
+      ) ? plan.outcomeRollAuthority : "";
       const observers = order.filter(id => (
         !protocolSet.has(id) &&
-        !finalFilterSet.has(id)
+        !finalFilterSet.has(id) &&
+        id !== "slow_burn" &&
+        id !== "dice_roll" &&
+        id !== "coin_flip"
       ));
 
       // Protocol consumers are intentionally chained: each removes only its
@@ -50087,6 +50926,46 @@ function MCPV5Run(tab, incomingText) {
           }
         }
       }
+
+      // Slow Burn scores only the cleaned visible narrative. Its host wrapper
+      // keeps state.npc private and publishes only its owned Author's Note marker.
+      if (!stopped && slowBurnSelected) {
+        const before = current;
+        const result = execute("slow_burn", current);
+        if (
+          result &&
+          result.__mcpOk === true &&
+          typeof result.text === "string"
+        ) {
+          current = MCPV5ApplyOutputGuard(
+            "slow_burn",
+            result.text,
+            before,
+            original
+          );
+          if (result.stop === true) stopped = true;
+        }
+      }
+
+      // Dice Roll and Coin Flip compete for one Outcome Roll capability. Only
+      // the elected authority may decorate a normal visible story response.
+      if (!stopped && outcomeRollId) {
+        const before = current;
+        const result = execute(outcomeRollId, current);
+        if (
+          result &&
+          result.__mcpOk === true &&
+          typeof result.text === "string"
+        ) {
+          current = MCPV5ApplyOutputGuard(
+            outcomeRollId,
+            result.text,
+            before,
+            original
+          );
+          if (result.stop === true) stopped = true;
+        }
+      }
     }
   }
 
@@ -50150,5 +51029,5 @@ function MCPV5Run(tab, incomingText) {
 try {
   MCPV5SyncControls();
 } catch (error) {
-  log("MCP V5.3.7 initialization error:", error);
+  log("MCP V5.3.8 initialization error:", error);
 }
